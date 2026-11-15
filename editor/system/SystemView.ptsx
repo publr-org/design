@@ -1,0 +1,107 @@
+// The design system canvas's place in the workspace's first tab: the engine's canvas
+// (canvas.ts) in a host that carries no binding, the reference selector in its bottom
+// right corner (the reference itself is the viewer, drawn picture-in-picture over it by
+// the shell), what it says while it opens, and the pill a drag between the canvases
+// carries. It stays mounted, hidden, while a file's tab shows. Also
+// the keys while it has the focus: Delete removes the selected item, Escape clears the
+// selection, the arrow keys move the item along its list.
+import { Publr } from "publr-jsx";
+import { route } from "../app/route";
+import { DsCanvas } from "./canvas";
+import { nudge, removable, removeItem } from "./actions";
+import { installCarry, uninstallCarry } from "./sample";
+import { dsCanvas, firstReference, openSystem, selectItem, selectSection, sys } from "./store";
+import { measureArea, openWorkspace } from "./workspace";
+import { ReferenceSelector } from "./Tabs.ptsx";
+
+/** The specimen every type entry is drawn in. */
+const SAMPLE = "The quick brown fox jumps over the lazy dog";
+
+let started = "";
+
+async function start(project: string): Promise<void> {
+  const c = dsCanvas();
+  if (!c || started === project) return;
+  started = project;
+  const doc = await openSystem(project);
+  if (!doc) return;
+  // The blocks Primitive blocks lists: the block editor's own registry, read-only.
+  let blocks: { type: string; label: string; category: string }[] = [];
+  try {
+    const lib = await import("../../../editor/design/model/library");
+    const reg = await import("../../../editor/model/registry");
+    if (!reg.blockType("paragraph")) (await import("../../../editor/blocks/index")).registerCoreBlocks();
+    blocks = lib.libraryBlocks().map((b: { type: string; label: string; category: string }) => ({ type: b.type, label: b.label, category: b.category }));
+  } catch (err) {
+    console.error("primitive blocks", err);
+  }
+  await c.start(doc, blocks, sys.projectName, SAMPLE);
+}
+
+const host = Publr.ref((el: HTMLElement) => {
+  if (!dsCanvas()) new DsCanvas(el);
+  if (route.system) void start(route.system);
+});
+
+/** The section's box, for the picture-in-picture drawn over it. */
+const area = Publr.ref((el: HTMLElement) => {
+  new ResizeObserver(() => measureArea(el)).observe(el);
+  measureArea(el);
+});
+
+const typing = (t: EventTarget | null) => t instanceof HTMLElement && (!!t.closest("input, textarea, select, [role=menu], [role=listbox]") || t.isContentEditable);
+
+/** The keys while the design system has the focus (true: taken). */
+export function systemKey(e: KeyboardEvent): boolean {
+  if (typing(e.target)) return false;
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod) return false;
+  const sel = sys.selected;
+  if ((e.key === "Delete" || e.key === "Backspace") && sel && removable(sel)) {
+    e.preventDefault();
+    removeItem(sel);
+    return true;
+  }
+  if (e.key === "Escape") {
+    if (sel) selectSection(sys.selectedSection);
+    else selectSection("");
+    return true;
+  }
+  if (sel && (e.key === "ArrowLeft" || e.key === "ArrowUp" || e.key === "ArrowRight" || e.key === "ArrowDown")) {
+    e.preventDefault();
+    nudge(sel, e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1);
+    return true;
+  }
+  return false;
+}
+
+export function SystemView() {
+  Publr.effect(() => {
+    const p = route.system;
+    if (p && dsCanvas()) void start(p);
+    if (p) void openWorkspace(p, firstReference());
+  });
+  Publr.effect(() => {
+    installCarry();
+    return () => uninstallCarry();
+  });
+  return (
+    <section ref={area} data-pd-system class="relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5]" hidden={route.tab !== "system"} onPointerDown={(e: PointerEvent) => !(e.target instanceof Element && e.target.closest("[data-pd-reference]")) && (sys.focus = "system")}>
+      <div ref={host} data-pd-system-host class="absolute inset-0"></div>
+      {sys.ready && <ReferenceSelector />}
+      {sys.status && (
+        <div role="status" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-[8px] bg-[var(--pd-bg)] px-3 py-2 text-[11px] text-[var(--pd-text)] shadow-[var(--pd-toolbar-shadow)]">
+          {sys.status}
+        </div>
+      )}
+      {sys.ghost.show && (
+        <div data-pd-carry class={["pointer-events-none fixed z-[90] flex max-w-[320px] items-center gap-2 rounded-[6px] px-2 py-1 text-[11px] font-[500] text-white shadow-[var(--pd-toolbar-shadow)]", sys.ghost.ok ? "bg-[#0d99ff]" : "bg-[#5c5c66]"]} style={`left:${sys.ghost.x + 14}px;top:${sys.ghost.y + 14}px`}>
+          {sys.ghost.swatch && <span class="h-3 w-3 shrink-0 rounded-[3px] border border-white/60" style={`background:${sys.ghost.swatch}`}></span>}
+          <span class="truncate">{sys.ghost.text}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+export { selectItem };

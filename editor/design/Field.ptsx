@@ -1,0 +1,267 @@
+// A number or text field of the Design tab, as the editor draws them: 24 px tall on the
+// panel's second colour, a label or icon on the left that scrubs the value when dragged
+// (Shift: ten at a time; Escape puts it back), the value typed on the right. A typed
+// value applies on Enter or when the field loses the focus (arithmetic works: "120/2");
+// Escape leaves it as it was; the arrow keys step it (Shift: ten). A scrub is one undo
+// step: `onValue` hears its start, each move and its end. A field that can follow a
+// variable shows the variable button on hover; once bound, its value shows in a pill (the
+// variable's name on hover; it opens the picker) with the detach button on hover.
+import { PdIcon } from "./PdIcon.ptsx";
+import type { PdIconName } from "./icons";
+
+export type FieldPhase = "set" | "start" | "move" | "end" | "cancel";
+
+export type FieldProps = {
+  /** A letter ("X", "W") or nothing when `icon` is given. */
+  label?: string;
+  icon?: PdIconName;
+  value: string;
+  /** Shown after the value ("%", "°"). */
+  suffix?: string;
+  /** A chevron on the right (a field with a menu: W and H in auto layout, fonts). */
+  chevron?: boolean;
+  disabled?: boolean;
+  /** Takes the whole row (otherwise one column). */
+  wide?: boolean;
+  title?: string;
+  /** Not a number: no scrubbing. */
+  text?: boolean;
+  classes?: string;
+  /** A number typed, stepped or scrubbed. */
+  onValue?: (v: number, phase: FieldPhase) => void;
+  /** A text field's value typed. */
+  onText?: (text: string) => void;
+  /** The chevron pressed (opens the field's menu). */
+  onMenu?: (event: MouseEvent) => void;
+  name?: string;
+  /** Bound to a variable: its name (the pill in place of the value shows the value, the name on hover). */
+  variable?: string;
+  /** The field can follow a variable: its variable button (on hover) or the pill opens
+   * the picker beside `el`. */
+  onVariable?: (el: HTMLElement) => void;
+  /** The bound variable detached (the value stays). */
+  onDetach?: () => void;
+};
+
+type Scrub = { input: HTMLInputElement; x: number; base: number; last: number; id: number; on: (v: number, phase: FieldPhase) => void; esc: (e: KeyboardEvent) => void };
+
+let scrub: Scrub | null = null;
+
+/** A typed number: arithmetic on numbers ("12*2", "100 - 8"), units ignored. */
+export function evalNumber(text: string): number {
+  const src = text.replace(/[%°]|px/gi, "").replace(/,/g, ".").trim();
+  let at = 0;
+  const peek = () => src[at];
+  const space = () => {
+    while (src[at] === " ") at++;
+  };
+  const atom = (): number => {
+    space();
+    if (peek() === "(") {
+      at++;
+      const v = sum();
+      space();
+      if (peek() === ")") at++;
+      return v;
+    }
+    if (peek() === "-") {
+      at++;
+      return -atom();
+    }
+    if (peek() === "+") {
+      at++;
+      return atom();
+    }
+    const m = /^\d*\.?\d+(e[-+]?\d+)?/i.exec(src.slice(at));
+    if (!m) return Number.NaN;
+    at += m[0].length;
+    return Number.parseFloat(m[0]);
+  };
+  const product = (): number => {
+    let v = atom();
+    for (;;) {
+      space();
+      const op = peek();
+      if (op !== "*" && op !== "/") return v;
+      at++;
+      const r = atom();
+      v = op === "*" ? v * r : v / r;
+    }
+  };
+  const sum = (): number => {
+    let v = product();
+    for (;;) {
+      space();
+      const op = peek();
+      if (op !== "+" && op !== "-") return v;
+      at++;
+      const r = product();
+      v = op === "+" ? v + r : v - r;
+    }
+  };
+  const v = sum();
+  space();
+  return at === src.length && Number.isFinite(v) ? v : Number.NaN;
+}
+
+const round = (v: number) => Math.round(v * 100) / 100;
+
+/** After a value applies: the field shows the document's value (also when it did not
+ * change: a value the document refused or clamped). */
+function settle(input: HTMLInputElement): void {
+  requestAnimationFrame(() => {
+    if (document.activeElement !== input) input.value = input.dataset.value ?? input.value;
+  });
+}
+
+function applyTyped(input: HTMLInputElement, value: string, text: boolean, onValue?: (v: number, phase: FieldPhase) => void, onText?: (t: string) => void): void {
+  if (input.value === value) return;
+  if (text) {
+    if (onText) onText(input.value);
+  } else if (onValue) {
+    const v = evalNumber(input.value);
+    if (Number.isFinite(v)) onValue(v, "set");
+  }
+  settle(input);
+}
+
+function keyDown(event: KeyboardEvent, value: string, text: boolean, onValue?: (v: number, phase: FieldPhase) => void): void {
+  const input = event.currentTarget as HTMLInputElement;
+  if (event.key === "Escape") {
+    input.value = value;
+    input.blur();
+    return;
+  }
+  if (event.key === "Enter") {
+    input.blur();
+    return;
+  }
+  if (!text && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+    event.preventDefault();
+    const n = evalNumber(input.value);
+    if (!Number.isFinite(n) || !onValue) return;
+    const v = round(n + (event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 10 : 1));
+    onValue(v, "set");
+    input.value = String(v);
+    requestAnimationFrame(() => {
+      input.value = input.dataset.value ?? input.value;
+      input.select();
+    });
+  }
+}
+
+function scrubStart(event: PointerEvent, disabled: boolean, text: boolean, onValue?: (v: number, phase: FieldPhase) => void): void {
+  if (disabled || text || event.button !== 0 || !onValue) return;
+  const label = event.currentTarget as HTMLElement;
+  const input = label.parentElement?.querySelector("input");
+  if (!input) return;
+  const base = evalNumber(input.value);
+  if (!Number.isFinite(base)) return;
+  event.preventDefault();
+  label.setPointerCapture(event.pointerId);
+  const esc = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || !scrub) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const s = scrub;
+    scrub = null;
+    window.removeEventListener("keydown", s.esc, true);
+    s.on(s.base, "cancel");
+    s.input.value = String(s.base);
+    settle(s.input);
+  };
+  window.addEventListener("keydown", esc, true);
+  scrub = { input, x: event.clientX, base, last: base, id: event.pointerId, on: onValue, esc };
+  onValue(base, "start");
+}
+
+function scrubMove(event: PointerEvent): void {
+  const s = scrub;
+  if (!s || s.id !== event.pointerId) return;
+  const step = event.shiftKey ? 10 : 1;
+  const v = round(s.base + Math.round(event.clientX - s.x) * step);
+  if (v === s.last) return;
+  s.last = v;
+  s.input.value = String(v);
+  s.on(v, "move");
+}
+
+function scrubEnd(event: PointerEvent): void {
+  const s = scrub;
+  if (!s || s.id !== event.pointerId) return;
+  scrub = null;
+  window.removeEventListener("keydown", s.esc, true);
+  s.on(s.last, "end");
+  settle(s.input);
+}
+
+export function Field({ label = "", icon, value, suffix = "", chevron = false, disabled = false, wide = false, title = "", text = false, classes = "", onValue, onText, onMenu, name = "", variable = "", onVariable, onDetach }: FieldProps) {
+  return (
+    <div
+      class={[
+        "group/field relative flex h-6 min-w-0 items-center rounded-[5px] bg-[var(--pd-bg-2)] outline outline-1 -outline-offset-1 outline-transparent hover:outline-[var(--pd-border)] focus-within:outline-[var(--pd-brand)]",
+        wide ? "col-span-2" : "",
+        disabled ? "opacity-40" : "",
+        classes,
+      ]}
+      title={title}
+      data-pd-field={name || label || icon || "field"}
+    >
+      {(label || icon) && (
+        <span
+          class={["flex h-6 shrink-0 select-none items-center justify-center text-[var(--pd-text-2)]", icon ? "w-6" : "w-6 pl-0.5", text || disabled || !onValue ? "" : "cursor-ew-resize"]}
+          onPointerDown={(event: PointerEvent) => scrubStart(event, disabled || !!variable, text, onValue)}
+          onPointerMove={(event: PointerEvent) => scrubMove(event)}
+          onPointerUp={(event: PointerEvent) => scrubEnd(event)}
+          onPointerCancel={(event: PointerEvent) => scrubEnd(event)}
+        >
+          {icon ? <PdIcon name={icon} /> : label}
+        </span>
+      )}
+      {variable ? (
+        <span class="flex h-6 min-w-0 flex-1 items-center pr-0.5 pl-0.5">
+          <button
+            type="button"
+            class="h-[18px] min-w-0 max-w-full truncate rounded-[3px] border border-[var(--pd-border)] px-1 text-left text-[11px] leading-[16px] text-[var(--pd-text)] hover:bg-[var(--pd-bg-3)]"
+            title={variable}
+            data-pd-field-var={variable}
+            disabled={disabled}
+            onClick={(event: MouseEvent) => onVariable?.(event.currentTarget as HTMLElement)}
+          >
+            {value || variable}
+          </button>
+          <span class="flex-1"></span>
+          {onDetach && (
+            <button type="button" tabindex={-1} class="hidden h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[var(--pd-icon)] group-hover/field:flex" title="Detach variable" data-pd-field-detach onClick={() => onDetach()}>
+              <PdIcon name="detach" />
+            </button>
+          )}
+        </span>
+      ) : (
+      <input
+        data-pd-number
+        class={["h-6 w-full min-w-0 flex-1 bg-transparent text-[11px] text-[var(--pd-text)] outline-none", label || icon ? "pl-0.5" : "pl-2", chevron ? "pr-0" : "pr-1.5"]}
+        type="text"
+        spellcheck={false}
+        value={value}
+        data-value={value}
+        disabled={disabled || (!onValue && !onText)}
+        onFocus={(event: Event) => (event.currentTarget as HTMLInputElement).select()}
+        onBlur={(event: Event) => applyTyped(event.currentTarget as HTMLInputElement, value, text, onValue, onText)}
+        onKeyDown={(event: KeyboardEvent) => keyDown(event, value, text, onValue)}
+      />
+      )}
+      {!variable && onVariable && !disabled && (
+        <button type="button" tabindex={-1} class="hidden h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[var(--pd-icon)] group-hover/field:flex" title="Apply variable" data-pd-field-apply onClick={(event: MouseEvent) => onVariable(event.currentTarget as HTMLElement)}>
+          <PdIcon name="variables" />
+        </button>
+      )}
+      {suffix && !variable && <span class="pointer-events-none shrink-0 pr-2 text-[11px] text-[var(--pd-text-2)]">{suffix}</span>}
+      {chevron && (
+        <button type="button" tabindex={-1} class="flex h-6 w-5 shrink-0 items-center justify-center rounded-r-[5px] text-[var(--pd-text-2)] hover:text-[var(--pd-text)]" onClick={(event: MouseEvent) => onMenu?.(event)}>
+          <PdIcon name="chevron-down" size={20} />
+        </button>
+      )}
+    </div>
+  );
+}

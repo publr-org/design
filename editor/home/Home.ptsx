@@ -1,0 +1,781 @@
+// The file browser, PublrDesign's home screen, after Figma's: the sidebar with Recents,
+// Drafts, Trash and the projects (and "New project"); the main area with the view's
+// title, the grid or list switch, "Import" (.fig and .pubd, picked or dropped anywhere)
+// and "New design file"; then the files as cards (thumbnail, name, "Edited 5 minutes
+// ago") or rows, each with its menu (Open, Rename, Duplicate, Move to project, Delete;
+// in Trash: Restore, Delete forever), also on a right click.
+//
+// Fonts (in the sidebar) lists the shared fonts every file uses (fonts.ts), by family:
+// "Upload fonts" or a drop (files or folders) adds .otf, .ttf, .woff, .woff2, .ttc and
+// .otc files; each style can be removed.
+//
+// The files live in OPFS (store.ts); this keeps a copy of their metas in memory and
+// writes the cards into the store whenever they or the view change, reading them afresh
+// each time the browser shows (route.ts). The chrome renders store values only.
+import { Publr } from "publr-jsx";
+import { AssetCard } from "../../../ui/src/components/AssetCard/AssetCard.ptsx";
+import { AssetCardActions } from "../../../ui/src/components/AssetCard/AssetCardActions.ptsx";
+import { AssetCardMeta } from "../../../ui/src/components/AssetCard/AssetCardMeta.ptsx";
+import { AssetCardPreview } from "../../../ui/src/components/AssetCard/AssetCardPreview.ptsx";
+import { AssetCardTitle } from "../../../ui/src/components/AssetCard/AssetCardTitle.ptsx";
+import { Button } from "../../../ui/src/components/Button/Button.ptsx";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { DropOverlay } from "../../../ui/src/components/DropOverlay/DropOverlay.ptsx";
+import { DropZone } from "../../../ui/src/components/DropZone/DropZone.ptsx";
+import { Notice } from "../../../ui/src/components/Notice/Notice.ptsx";
+import { Empty } from "../../../ui/src/components/Empty/Empty.ptsx";
+import { EmptyDescription } from "../../../ui/src/components/Empty/EmptyDescription.ptsx";
+import { EmptyTitle } from "../../../ui/src/components/Empty/EmptyTitle.ptsx";
+import { Icon } from "../../../ui/src/components/Icon/Icon.ptsx";
+import { InlineInput } from "../../../ui/src/components/InlineInput/InlineInput.ptsx";
+import { Input } from "../../../ui/src/components/Input/Input.ptsx";
+import { ListOption } from "../../../ui/src/components/ListOption/ListOption.ptsx";
+import { Modal } from "../../../ui/src/components/Modal/Modal.ptsx";
+import { SegmentedControl } from "../../../ui/src/components/SegmentedControl/SegmentedControl.ptsx";
+import type { SegmentedOption } from "../../../ui/src/components/SegmentedControl/SegmentedControl.ptsx";
+import { SidebarNavEyebrow } from "../../../ui/src/components/Sidebar/SidebarNavEyebrow.ptsx";
+import { SidebarNavItem } from "../../../ui/src/components/Sidebar/SidebarNavItem.ptsx";
+import { Text } from "../../../ui/src/components/Text/Text.ptsx";
+import { importAndShow, openFileRoute, route } from "../app/route";
+import { installIcons } from "../design/icons";
+import { PdIcon } from "../design/PdIcon.ptsx";
+import { servedDoc } from "../viewer/loader";
+import { addFonts, FONT_ACCEPT, FONT_FILES, fontsChannel, listFonts, removeFont } from "./fonts";
+import type { SharedFont } from "./fonts";
+import { createEmpty, createProject, duplicate, listFiles, listProjects, removeFile, SERVED_ID, servedMeta, thumbnailFile, updateMeta } from "./store";
+import type { FileMeta, Project, ServedMeta } from "./store";
+
+/** One file as a card or a row shows it. */
+export type Card = {
+  id: string;
+  name: string;
+  /** "Edited 5 minutes ago". */
+  edited: string;
+  /** The thumbnail's object URL ("" for none). */
+  thumb: string;
+  /** Drafts, a project's name, or the server. */
+  location: string;
+  /** Which menu it has: a file, a file in Trash, or the served document. */
+  menu: "file" | "trash" | "served";
+  /** Its name is being edited in place. */
+  renaming: boolean;
+};
+
+type NavProject = { id: string; name: string; active: boolean };
+/** A family of shared fonts as Fonts lists it. */
+type FontFamily = { family: string; styles: { key: string; id: string; label: string; detail: string }[] };
+type MoveTarget = { key: string; name: string; current: boolean };
+
+/** The views: "recents", "drafts", "trash", or a project's id. */
+export const state = Publr.reactive({
+  view: "recents",
+  title: "Recents",
+  recents: true,
+  drafts: false,
+  trash: false,
+  projects: [] as NavProject[],
+  list: false,
+  layouts: [] as SegmentedOption[],
+  cards: [] as Card[],
+  loading: true,
+  /** The empty view's title and line. */
+  emptyTitle: "",
+  emptyText: "",
+  renaming: "",
+  /** The file "Move to project" is open for. */
+  moving: "",
+  movingTitle: "",
+  moveTargets: [] as MoveTarget[],
+  newProject: false,
+  projectName: "",
+  dropping: false,
+  /** Fonts shows (the shared fonts). */
+  fonts: false,
+  fontFamilies: [] as FontFamily[],
+  fontsOver: false,
+  fontsBusy: false,
+  /** What the last upload said ("" while nothing). */
+  fontsNote: "",
+  fontsNoteTone: "success" as "success" | "error",
+});
+
+export const picker = Publr.ref();
+export const fontPicker = Publr.ref();
+export const renameBox = Publr.ref();
+export const projectBox = Publr.ref();
+
+let metas: FileMeta[] = [];
+let projects: Project[] = [];
+let served: ServedMeta | null = null;
+/** Thumbnail object URLs by file id, with what they were made from. */
+const thumbs = new Map<string, { key: string; url: string }>();
+
+const MINUTE = 60_000;
+
+/** "Edited 5 minutes ago", as Figma words it. */
+function edited(at: number, now: number): string {
+  const d = Math.max(0, now - at);
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"} ago`;
+  if (d < MINUTE) return "Edited just now";
+  if (d < 60 * MINUTE) return `Edited ${plural(Math.floor(d / MINUTE), "minute")}`;
+  if (d < 24 * 60 * MINUTE) return `Edited ${plural(Math.floor(d / (60 * MINUTE)), "hour")}`;
+  if (d < 30 * 24 * 60 * MINUTE) return `Edited ${plural(Math.floor(d / (24 * 60 * MINUTE)), "day")}`;
+  return `Edited ${new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`;
+}
+
+const projectName = (id: string | null) => (id ? (projects.find((p) => p.id === id)?.name ?? "Drafts") : "Drafts");
+
+/** The project new and imported files go to from the current view (null: Drafts). */
+function targetProject(): string | null {
+  return projects.some((p) => p.id === state.view) ? state.view : null;
+}
+
+/** Makes or keeps the object URL of a file's thumbnail. */
+async function thumbFor(id: string, key: string, has: boolean): Promise<void> {
+  const known = thumbs.get(id);
+  if (known?.key === key) return;
+  if (known) URL.revokeObjectURL(known.url);
+  thumbs.delete(id);
+  if (!has) return;
+  const file = await thumbnailFile(id);
+  if (file) thumbs.set(id, { key, url: URL.createObjectURL(file) });
+}
+
+/** Writes the cards of the current view, and the rest of the chrome, into the store. */
+function build(): void {
+  const now = Date.now();
+  const view = state.view;
+  const project = projects.find((p) => p.id === view);
+  state.recents = view === "recents";
+  state.drafts = view === "drafts";
+  state.trash = view === "trash";
+  state.fonts = view === "fonts";
+  state.title = project ? project.name : view === "drafts" ? "Drafts" : view === "trash" ? "Trash" : view === "fonts" ? "Fonts" : "Recents";
+  state.projects = projects.map((p) => ({ id: p.id, name: p.name, active: p.id === view }));
+  state.layouts = [
+    { key: "grid", label: "Show as grid", icon: "layout-grid", pressed: !state.list },
+    { key: "list", label: "Show as list", icon: "list-view", pressed: state.list },
+  ];
+  let list: FileMeta[];
+  if (view === "trash") list = metas.filter((m) => m.trashed !== null).sort((a, b) => (b.trashed ?? 0) - (a.trashed ?? 0));
+  else if (view === "drafts") list = metas.filter((m) => m.trashed === null && m.project === null);
+  else if (project) list = metas.filter((m) => m.trashed === null && m.project === project.id);
+  else list = metas.filter((m) => m.trashed === null).sort((a, b) => Math.max(b.opened, b.edited) - Math.max(a.opened, a.edited));
+  const cards: Card[] = list.map((m) => ({
+    id: m.id,
+    name: m.name,
+    edited: edited(m.edited, now),
+    thumb: thumbs.get(m.id)?.url ?? "",
+    location: projectName(m.project),
+    menu: m.trashed === null ? "file" : "trash",
+    renaming: state.renaming === m.id,
+  }));
+  // The document `pe view` serves leads Recents until something newer was opened.
+  if (served && view === "recents") {
+    const card: Card = { id: SERVED_ID, name: served.name, edited: "Served by pe view", thumb: thumbs.get(SERVED_ID)?.url ?? "", location: "pe view", menu: "served", renaming: false };
+    const at = list.findIndex((m) => Math.max(m.opened, m.edited) < served!.opened);
+    if (!served.opened || at < 0) cards.splice(served.opened ? cards.length : 0, 0, card);
+    else cards.splice(at, 0, card);
+  }
+  state.cards = cards;
+  state.emptyTitle = view === "trash" ? "Trash is empty" : project ? "This project has no files yet" : "No files yet";
+  state.emptyText = view === "trash" ? "Files you delete wait here until you delete them forever." : "Import a .fig or .pubd file, or make a new design file.";
+}
+
+/** Reads the files, projects and the served document from OPFS and shows them. */
+export async function reload(): Promise<void> {
+  const [files, list, info] = await Promise.all([listFiles(), listProjects(), servedDoc()]);
+  metas = files;
+  projects = list;
+  served = info ? await servedMeta(info.name) : null;
+  const live = new Set(files.map((m) => m.id));
+  for (const id of [...thumbs.keys()]) {
+    if (id !== SERVED_ID && !live.has(id)) {
+      URL.revokeObjectURL(thumbs.get(id)!.url);
+      thumbs.delete(id);
+    }
+  }
+  await Promise.all(files.map((m) => thumbFor(m.id, `${m.edited}:${m.thumbnail}`, m.thumbnail)));
+  if (served) await thumbFor(SERVED_ID, `${served.name}:${served.thumbnail}`, served.thumbnail);
+  if (!projects.some((p) => p.id === state.view) && !["recents", "drafts", "trash", "fonts"].includes(state.view)) state.view = "recents";
+  await reloadFonts();
+  state.loading = false;
+  build();
+}
+
+// Showing again, or files changed while away (an import): read them afresh.
+Publr.effect(() => {
+  if (route.screen !== "home") return;
+  void route.files;
+  void reload();
+});
+
+// Times move on: "Edited just now" becomes "Edited 1 minute ago".
+Publr.effect(() => {
+  if (state.loading) return;
+  const timer = setInterval(() => build(), MINUTE);
+  return () => clearInterval(timer);
+});
+
+export function show(view: string): void {
+  state.view = view;
+  state.renaming = "";
+  state.fontsNote = "";
+  build();
+}
+
+// `/fonts` opens Fonts.
+Publr.effect(() => {
+  if (route.screen === "home" && route.homeView === "fonts") show("fonts");
+});
+
+const WEIGHTS: Record<number, string> = { 100: "Thin", 200: "Extra Light", 300: "Light", 400: "Regular", 500: "Medium", 600: "Semi Bold", 700: "Bold", 800: "Extra Bold", 900: "Black" };
+
+/** The shared fonts, by family, into the store. */
+export async function reloadFonts(): Promise<void> {
+  const list: SharedFont[] = await listFonts().catch(() => []);
+  const fams = new Map<string, FontFamily>();
+  for (const f of list) {
+    const variable = f.axes.length > 0;
+    for (const face of f.faces) {
+      let fam = fams.get(face.family);
+      if (!fam) fams.set(face.family, (fam = { family: face.family, styles: [] }));
+      const from = f.source === "google" ? "Google Fonts" : f.source === "local" ? Publr.t("This computer") : f.name;
+      fam.styles.push({
+        key: `${f.id}:${face.style}`,
+        id: f.id,
+        label: face.style || WEIGHTS[face.weight] || String(face.weight),
+        detail: `${face.weight}${face.italic ? " italic" : ""}${variable ? ` · ${Publr.t("variable")} ${f.axes.map((a) => a.tag).join(", ")}` : ""} · ${from}`,
+      });
+    }
+  }
+  state.fontFamilies = [...fams.values()].sort((a, b) => a.family.localeCompare(b.family));
+}
+
+// Fonts added or removed in another tab (or by an open file's "Use local fonts").
+Publr.effect(() => {
+  if (typeof BroadcastChannel === "undefined") return;
+  const ch = fontsChannel();
+  ch.onmessage = () => void reloadFonts();
+  return () => ch.close();
+});
+
+/** Every font file under the dropped items (folders walked). */
+async function droppedFonts(dt: DataTransfer): Promise<File[]> {
+  type Entry = { isFile: boolean; isDirectory: boolean; file?(ok: (f: File) => void, bad: (e: unknown) => void): void; createReader?(): { readEntries(ok: (es: Entry[]) => void, bad: (e: unknown) => void): void } };
+  const out: File[] = [];
+  const walk = async (e: Entry): Promise<void> => {
+    if (e.isFile && e.file) out.push(await new Promise<File>((ok, bad) => e.file!(ok, bad)));
+    else if (e.isDirectory && e.createReader) {
+      const r = e.createReader();
+      for (;;) {
+        const batch = await new Promise<Entry[]>((ok, bad) => r.readEntries(ok, bad));
+        if (!batch.length) break;
+        for (const c of batch) await walk(c);
+      }
+    }
+  };
+  const entries = Array.from(dt.items)
+    .map((it) => (it as unknown as { webkitGetAsEntry?(): Entry | null }).webkitGetAsEntry?.() ?? null)
+    .filter((e): e is Entry => !!e);
+  if (!entries.length) return Array.from(dt.files);
+  for (const e of entries) await walk(e);
+  return out;
+}
+
+/** Adds font files as shared fonts, saying how it went. */
+export async function uploadFonts(files: File[]): Promise<void> {
+  const fonts = files.filter((f) => FONT_FILES.test(f.name));
+  const skipped = files.length - fonts.length;
+  if (!fonts.length) {
+    state.fontsNote = Publr.t("No font files there (.otf, .ttf, .woff, .woff2, .ttc, .otc).");
+    state.fontsNoteTone = "error";
+    return;
+  }
+  state.fontsBusy = true;
+  try {
+    const r = await addFonts(await Promise.all(fonts.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }))), "upload");
+    const faces = r.added.reduce((n, f) => n + f.faces.length, 0);
+    const parts = [r.added.length ? `${Publr.t("Added")} ${r.added.length} ${r.added.length === 1 ? Publr.t("file") : Publr.t("files")} (${faces} ${faces === 1 ? Publr.t("style") : Publr.t("styles")})` : Publr.t("Nothing new added")];
+    if (r.failed.length) parts.push(`${Publr.t("not fonts we can read")}: ${r.failed.map((f) => f.name).join(", ")}`);
+    if (skipped) parts.push(`${skipped} ${Publr.t("other files skipped")}`);
+    state.fontsNote = `${parts.join("; ")}.`;
+    state.fontsNoteTone = r.failed.length ? "error" : "success";
+  } finally {
+    state.fontsBusy = false;
+  }
+  await reloadFonts();
+}
+
+export function pickFonts(): void {
+  (fontPicker.current as HTMLInputElement | null)?.click();
+}
+
+export function pickedFonts(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  input.value = "";
+  if (files.length) void uploadFonts(files);
+}
+
+export function fontsDragOver(event: DragEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  state.fontsOver = true;
+}
+
+export function fontsDragLeave(): void {
+  state.fontsOver = false;
+}
+
+export async function fontsDrop(event: DragEvent): Promise<void> {
+  event.preventDefault();
+  event.stopPropagation();
+  state.fontsOver = false;
+  state.dropping = false;
+  if (event.dataTransfer) await uploadFonts(await droppedFonts(event.dataTransfer));
+}
+
+export async function removeShared(id: string): Promise<void> {
+  await removeFont(id);
+  state.fontsNote = Publr.t("Removed. Files open now keep the font until they are opened again.");
+  state.fontsNoteTone = "success";
+  await reloadFonts();
+}
+
+export function chooseLayout(event: MouseEvent): void {
+  const key = (event.currentTarget as HTMLElement).dataset.option;
+  state.list = key === "list";
+  build();
+}
+
+export function pickFiles(): void {
+  (picker.current as HTMLInputElement | null)?.click();
+}
+
+export function picked(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  input.value = "";
+  if (files.length) void importAndShow(files, targetProject(), false);
+}
+
+export async function newFile(): Promise<void> {
+  const meta = await createEmpty(targetProject());
+  openFileRoute(meta.id);
+}
+
+export function openCard(id: string): void {
+  if (state.renaming) return;
+  openFileRoute(id);
+}
+
+/** A right click on a card opens the card's own menu. */
+export function contextMenu(event: MouseEvent): void {
+  event.preventDefault();
+  (event.currentTarget as HTMLElement).querySelector<HTMLElement>('[data-part="trigger"]')?.click();
+}
+
+export function startRename(id: string): void {
+  state.renaming = id;
+  build();
+}
+
+Publr.effect(() => {
+  if (!state.renaming) return;
+  requestAnimationFrame(() => {
+    const input = (renameBox.current as HTMLElement | null)?.querySelector("input");
+    input?.focus();
+    input?.select();
+  });
+});
+
+export async function renameCard(id: string, event: Event): Promise<void> {
+  const name = (event.target as HTMLInputElement).value.trim();
+  state.renaming = "";
+  if (name) await updateMeta(id, { name });
+  await reload();
+}
+
+export function renameKey(event: KeyboardEvent): void {
+  if (event.key === "Escape") {
+    state.renaming = "";
+    build();
+  }
+}
+
+export function renameDone(): void {
+  if (!state.renaming) return;
+  state.renaming = "";
+  build();
+}
+
+export async function duplicateFile(id: string): Promise<void> {
+  await duplicate(id);
+  await reload();
+}
+
+export async function trashFile(id: string): Promise<void> {
+  await updateMeta(id, { trashed: Date.now() });
+  await reload();
+}
+
+export async function restoreFile(id: string): Promise<void> {
+  await updateMeta(id, { trashed: null });
+  await reload();
+}
+
+export async function deleteForever(id: string): Promise<void> {
+  await removeFile(id);
+  await reload();
+}
+
+export function startMove(id: string): void {
+  const meta = metas.find((m) => m.id === id);
+  if (!meta) return;
+  state.moving = id;
+  state.movingTitle = `Move “${meta.name}”`;
+  state.moveTargets = [{ key: "", name: "Drafts", current: meta.project === null }, ...projects.map((p) => ({ key: p.id, name: p.name, current: meta.project === p.id }))];
+}
+
+export async function moveTo(key: string): Promise<void> {
+  const id = state.moving;
+  state.moving = "";
+  await updateMeta(id, { project: key || null });
+  await reload();
+}
+
+export function closeMove(): void {
+  state.moving = "";
+}
+
+export function startNewProject(): void {
+  state.projectName = "";
+  state.newProject = true;
+}
+
+Publr.effect(() => {
+  if (!state.newProject) return;
+  requestAnimationFrame(() => (projectBox.current as HTMLElement | null)?.querySelector("input")?.focus());
+});
+
+export function typeProjectName(event: Event): void {
+  state.projectName = (event.target as HTMLInputElement).value;
+}
+
+export async function makeProject(): Promise<void> {
+  const name = state.projectName.trim();
+  if (!name) return;
+  state.newProject = false;
+  const p = await createProject(name);
+  state.view = p.id;
+  await reload();
+}
+
+export function projectKey(event: KeyboardEvent): void {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    void makeProject();
+  }
+}
+
+export function closeNewProject(): void {
+  state.newProject = false;
+}
+
+export function dragOver(event: DragEvent): void {
+  event.preventDefault();
+  if (event.dataTransfer?.types.includes("Files")) state.dropping = true;
+}
+
+export function dragLeave(event: DragEvent): void {
+  const into = event.relatedTarget as Node | null;
+  if (!into || !(event.currentTarget as HTMLElement).contains(into)) state.dropping = false;
+}
+
+export function drop(event: DragEvent): void {
+  event.preventDefault();
+  state.dropping = false;
+  if (state.fonts) {
+    void fontsDrop(event);
+    return;
+  }
+  const files = Array.from(event.dataTransfer?.files ?? []);
+  if (files.length) void importAndShow(files, targetProject(), false);
+}
+
+type FileMenuProps = {
+  id: string;
+  menu: Card["menu"];
+  /** The trigger's look: `secondary` over a card's picture, `tertiary` in a row. */
+  hierarchy: "secondary" | "tertiary";
+};
+
+/** A file's menu behind a "…" button: Open, Rename, Duplicate, Move to project, Delete;
+ * in Trash, Restore and Delete forever; the served document only opens. */
+function FileMenu({ id, menu, hierarchy }: FileMenuProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button hierarchy={hierarchy} size="xs" label={Publr.t("File actions")}>
+          <Icon name="more" size="sm" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="right" classes="min-w-44">
+        {menu !== "trash" && <DropdownMenuItem onClick={() => openCard(id)}>{Publr.t("Open")}</DropdownMenuItem>}
+        {menu === "file" && <DropdownMenuItem onClick={() => startRename(id)}>{Publr.t("Rename")}</DropdownMenuItem>}
+        {menu === "file" && <DropdownMenuItem onClick={() => duplicateFile(id)}>{Publr.t("Duplicate")}</DropdownMenuItem>}
+        {menu === "file" && <DropdownMenuItem onClick={() => startMove(id)}>{Publr.t("Move to project…")}</DropdownMenuItem>}
+        {menu === "file" && <DropdownMenuSeparator />}
+        {menu === "file" && (
+          <DropdownMenuItem variant="destructive" onClick={() => trashFile(id)}>
+            {Publr.t("Delete")}
+          </DropdownMenuItem>
+        )}
+        {menu === "trash" && <DropdownMenuItem onClick={() => restoreFile(id)}>{Publr.t("Restore")}</DropdownMenuItem>}
+        {menu === "trash" && (
+          <DropdownMenuItem variant="destructive" onClick={() => deleteForever(id)}>
+            {Publr.t("Delete forever")}
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+export function Home() {
+  installIcons();
+  return (
+    <div data-home class="relative flex h-full min-h-0 overflow-hidden bg-background text-foreground" onDragOver={(event: DragEvent) => dragOver(event)} onDragLeave={(event: DragEvent) => dragLeave(event)} onDrop={(event: DragEvent) => drop(event)}>
+      <aside class="flex w-60 shrink-0 flex-col border-r border-border bg-sidebar max-md:hidden">
+        <div class="flex h-12 shrink-0 items-center gap-2 px-4">
+          <PdIcon name="mark" size={20} />
+          <Text variant="heading-xs">PublrDesign</Text>
+        </div>
+        <nav aria-label={Publr.t("Files")} class="px-2">
+          <SidebarNavItem active={state.recents} onClick={() => show("recents")}>
+            <Icon name="clock-rewind" size="sm" />
+            {Publr.t("Recents")}
+          </SidebarNavItem>
+          <SidebarNavItem active={state.drafts} onClick={() => show("drafts")}>
+            <Icon name="file" size="sm" />
+            {Publr.t("Drafts")}
+          </SidebarNavItem>
+          <SidebarNavItem active={state.trash} onClick={() => show("trash")}>
+            <Icon name="trash" size="sm" />
+            {Publr.t("Trash")}
+          </SidebarNavItem>
+          <SidebarNavItem active={state.fonts} onClick={() => show("fonts")}>
+            <Icon name="fonts-icons" size="sm" />
+            {Publr.t("Fonts")}
+          </SidebarNavItem>
+        </nav>
+        <SidebarNavEyebrow classes="px-4">{Publr.t("Projects")}</SidebarNavEyebrow>
+        <nav aria-label={Publr.t("Projects")} class="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          {state.projects.map((p) => (
+            <SidebarNavItem active={p.active} onClick={() => show(p.id)}>
+              <Icon name="folder" size="sm" />
+              <span class="min-w-0 truncate">{p.name}</span>
+            </SidebarNavItem>
+          ))}
+          <SidebarNavItem onClick={() => startNewProject()}>
+            <Icon name="plus" size="sm" />
+            {Publr.t("New project")}
+          </SidebarNavItem>
+        </nav>
+      </aside>
+      <main class="flex min-w-0 flex-1 flex-col">
+        <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4 md:px-6">
+          <Text as="h1" variant="heading-sm" classes="min-w-0 flex-1 truncate">
+            {state.title}
+          </Text>
+          {state.fonts ? (
+            <Button hierarchy="primary" size="sm" disabled={state.fontsBusy} onClick={() => pickFonts()}>
+              <Icon name="upload" size="sm" />
+              {Publr.t("Upload fonts")}
+            </Button>
+          ) : (
+            <>
+              <SegmentedControl size="xs" label={Publr.t("Show files as")} options={state.layouts} classes="w-16 shrink-0" onSelect={(event: MouseEvent) => chooseLayout(event)} />
+              <Button hierarchy="secondary" size="sm" onClick={() => pickFiles()}>
+                <Icon name="upload" size="sm" />
+                {Publr.t("Import")}
+              </Button>
+              <Button hierarchy="primary" size="sm" onClick={() => newFile()}>
+                <Icon name="plus" size="sm" />
+                {Publr.t("New design file")}
+              </Button>
+            </>
+          )}
+          <input ref={fontPicker} data-font-input type="file" accept={FONT_ACCEPT} multiple hidden onChange={(event: Event) => pickedFonts(event)} />
+          <input ref={picker} data-import-input type="file" accept=".fig,.pubd,.zip" multiple hidden onChange={(event: Event) => picked(event)} />
+        </header>
+        {state.fonts && (
+          <div data-fonts class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:p-6">
+            <DropZone
+              title={Publr.t("Drop font files or folders here")}
+              description={Publr.t("OpenType, TrueType and web fonts (.otf, .ttf, .ttc, .otc, .woff, .woff2). Every file can use them.")}
+              accept={FONT_ACCEPT}
+              over={state.fontsOver}
+              onChange={(event: Event) => pickedFonts(event)}
+              onDragOver={(event: DragEvent) => fontsDragOver(event)}
+              onDragLeave={() => fontsDragLeave()}
+              onDrop={(event: DragEvent) => fontsDrop(event)}
+            />
+            {state.fontsNote && <Notice tone={state.fontsNoteTone}>{state.fontsNote}</Notice>}
+            {state.fontFamilies.length === 0 && (
+              <Empty mark="files">
+                <EmptyTitle>{Publr.t("No shared fonts yet")}</EmptyTitle>
+                <EmptyDescription>{Publr.t("Fonts you add here draw the text of every file that asks for them.")}</EmptyDescription>
+              </Empty>
+            )}
+            {state.fontFamilies.map((fam) => (
+              <section data-font-family={fam.family} class="rounded-xl border border-border">
+                <div class="flex items-baseline gap-2 border-b border-border px-4 py-2.5">
+                  <Text as="h2" variant="heading-xs" classes="min-w-0 flex-1 truncate">
+                    {fam.family}
+                  </Text>
+                  <Text variant="body-sm" tone="muted">
+                    {fam.styles.length === 1 ? Publr.t("1 style") : `${fam.styles.length} ${Publr.t("styles")}`}
+                  </Text>
+                </div>
+                <div role="list" class="flex flex-col py-1">
+                  {fam.styles.map((st) => (
+                    <div role="listitem" data-font-style={st.key} class="group flex items-center gap-3 px-4 py-1.5 hover:bg-muted">
+                      <Text variant="label-lg" classes="w-40 shrink-0 truncate">
+                        {st.label}
+                      </Text>
+                      <Text variant="body-sm" tone="muted" classes="min-w-0 flex-1 truncate">
+                        {st.detail}
+                      </Text>
+                      <Button hierarchy="tertiary" size="xs" label={Publr.t("Remove font file")} onClick={() => removeShared(st.id)}>
+                        <Icon name="trash" size="sm" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+        <div class={["min-h-0 flex-1 overflow-y-auto p-4 md:p-6", state.fonts ? "hidden" : ""]}>
+          {!state.loading && state.cards.length === 0 && (
+            <Empty mark="files">
+              <EmptyTitle>{state.emptyTitle}</EmptyTitle>
+              <EmptyDescription>{state.emptyText}</EmptyDescription>
+            </Empty>
+          )}
+          {!state.list && state.cards.length > 0 && (
+            <div data-file-grid class="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-5">
+              {state.cards.map((card) => (
+                <div data-file-card={card.id} onContextMenu={(event: MouseEvent) => contextMenu(event)}>
+                  <AssetCard>
+                    <button type="button" class="block w-full cursor-pointer text-left" aria-label={card.name} onClick={() => openCard(card.id)}>
+                      <AssetCardPreview aspect="landscape">
+                        {card.thumb ? <img src={card.thumb} alt="" class="size-full object-cover" /> : <Icon name="file" size="xl" classes="text-muted-foreground/60" />}
+                      </AssetCardPreview>
+                    </button>
+                    <div class="border-t border-border px-3 py-2.5">
+                      {card.renaming ? (
+                        <div ref={renameBox} onFocusOut={() => renameDone()} onKeyDown={(event: KeyboardEvent) => renameKey(event)}>
+                          <InlineInput value={card.name} label={Publr.t("File name")} classes="w-full text-xs font-medium" onChange={(event: Event) => renameCard(card.id, event)} />
+                        </div>
+                      ) : (
+                        <AssetCardTitle>{card.name}</AssetCardTitle>
+                      )}
+                      <AssetCardMeta classes="mt-0.5">{card.edited}</AssetCardMeta>
+                    </div>
+                    <AssetCardActions>
+                      <FileMenu id={card.id} menu={card.menu} hierarchy="secondary" />
+                    </AssetCardActions>
+                  </AssetCard>
+                </div>
+              ))}
+            </div>
+          )}
+          {state.list && state.cards.length > 0 && (
+            <div data-file-list role="list" class="flex flex-col">
+              <div class="grid grid-cols-[4rem_minmax(0,1fr)_10rem_10rem_2rem] items-center gap-4 border-b border-border px-2 pb-2 max-md:grid-cols-[4rem_minmax(0,1fr)_2rem]">
+                <span />
+                <Text variant="label-sm" tone="muted">
+                  {Publr.t("Name")}
+                </Text>
+                <Text variant="label-sm" tone="muted" classes="max-md:hidden">
+                  {Publr.t("Location")}
+                </Text>
+                <Text variant="label-sm" tone="muted" classes="max-md:hidden">
+                  {Publr.t("Edited")}
+                </Text>
+                <span />
+              </div>
+              {state.cards.map((card) => (
+                <div role="listitem" data-file-row={card.id} class="group grid grid-cols-[4rem_minmax(0,1fr)_10rem_10rem_2rem] items-center gap-4 rounded-lg px-2 py-1.5 hover:bg-muted max-md:grid-cols-[4rem_minmax(0,1fr)_2rem]" onContextMenu={(event: MouseEvent) => contextMenu(event)}>
+                  <button type="button" class="flex aspect-4/3 w-16 cursor-pointer items-center justify-center overflow-hidden rounded border border-border bg-muted" aria-label={card.name} onClick={() => openCard(card.id)}>
+                    {card.thumb ? <img src={card.thumb} alt="" class="size-full object-cover" /> : <Icon name="file" size="sm" classes="text-muted-foreground/60" />}
+                  </button>
+                  {card.renaming ? (
+                    <div ref={renameBox} onFocusOut={() => renameDone()} onKeyDown={(event: KeyboardEvent) => renameKey(event)}>
+                      <InlineInput value={card.name} label={Publr.t("File name")} classes="w-full text-sm font-medium" onChange={(event: Event) => renameCard(card.id, event)} />
+                    </div>
+                  ) : (
+                    <button type="button" class="min-w-0 cursor-pointer truncate text-left" onClick={() => openCard(card.id)}>
+                      <Text variant="label-lg">{card.name}</Text>
+                    </button>
+                  )}
+                  <Text variant="body-sm" tone="muted" classes="truncate max-md:hidden">
+                    {card.location}
+                  </Text>
+                  <Text variant="body-sm" tone="muted" classes="truncate max-md:hidden">
+                    {card.edited}
+                  </Text>
+                  <FileMenu id={card.id} menu={card.menu} hierarchy="tertiary" />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+      {state.dropping && !state.fonts && <DropOverlay label={Publr.t("Drop .fig or .pubd files to import them")} />}
+      {state.moving && (
+        <Modal title={state.movingTitle} description={Publr.t("Choose where the file goes.")} size="sm" onClose={() => closeMove()}>
+          <div data-move-targets class="flex flex-col gap-0.5">
+            {state.moveTargets.map((t) => (
+              <ListOption pressed={t.current} onClick={() => moveTo(t.key)}>
+                <span class="flex items-center gap-2">
+                  <Icon name={t.key ? "folder" : "file"} size="sm" />
+                  <Text variant="label-lg">{t.name}</Text>
+                </span>
+              </ListOption>
+            ))}
+          </div>
+        </Modal>
+      )}
+      {state.newProject && (
+        <Modal
+          title={Publr.t("New project")}
+          size="sm"
+          footerAlign="end"
+          onClose={() => closeNewProject()}
+          footer={
+            <>
+              <Button hierarchy="secondary" size="sm" onClick={() => closeNewProject()}>
+                {Publr.t("Cancel")}
+              </Button>
+              <Button hierarchy="primary" size="sm" disabled={!state.projectName.trim()} onClick={() => makeProject()}>
+                {Publr.t("Create project")}
+              </Button>
+            </>
+          }
+        >
+          <div ref={projectBox}>
+            <Input value={state.projectName} label={Publr.t("Project name")} placeholder={Publr.t("Project name")} onInput={(event: Event) => typeProjectName(event)} onKeyDown={(event: KeyboardEvent) => projectKey(event)} />
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}

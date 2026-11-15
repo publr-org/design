@@ -1,0 +1,128 @@
+// The floating toolbar at the bottom of the window: Move, Frame, Shapes, Pen, Text, Code
+// layer, Comment and Actions, then the mode switch (Draw, Design, Motion, Dev Mode). Move,
+// Hand, Scale, Frame, Slice and the shapes but Arrow and Image, and Text act (tools/canvas.ts);
+// above the bar, the canvas's notices (a font missing).
+import { Publr } from "publr-jsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import { ToolGroup } from "./ToolGroup.ptsx";
+import { openRequest } from "./requests";
+import { closeReturn, returnBarShown, returnToInstance, shell } from "./store";
+import { canvasNotice } from "./tools/canvas";
+
+const MOVE = [
+  { tool: "move" as const, icon: "move" as const, label: "Move", keys: "V" },
+  { tool: "hand" as const, icon: "hand" as const, label: "Hand tool", keys: "H" },
+  { tool: "scale" as const, icon: "scale" as const, label: "Scale", keys: "K" },
+];
+const FRAME = [
+  { tool: "frame" as const, icon: "frame" as const, label: "Frame", keys: "F" },
+  { tool: "section" as const, icon: "section" as const, label: "Section", keys: "⇧S", feature: "tools/section-tool" },
+  { tool: "slice" as const, icon: "slice" as const, label: "Slice", keys: "S" },
+];
+const SHAPES = [
+  { tool: "rectangle" as const, icon: "rectangle" as const, label: "Rectangle", keys: "R" },
+  { tool: "line" as const, icon: "line" as const, label: "Line", keys: "L" },
+  { tool: "arrow" as const, icon: "arrow" as const, label: "Arrow", keys: "⇧L", feature: "tools/arrow-tool" },
+  { tool: "ellipse" as const, icon: "ellipse" as const, label: "Ellipse", keys: "O" },
+  { tool: "polygon" as const, icon: "polygon" as const, label: "Polygon", keys: "" },
+  { tool: "star" as const, icon: "star" as const, label: "Star", keys: "" },
+  { tool: "image" as const, icon: "image" as const, label: "Image/video…", keys: "⇧⌘K", feature: "tools/place-image-video" },
+];
+const PEN = [
+  { tool: "pen" as const, icon: "pen" as const, label: "Pen", keys: "P", feature: "tools/pen-tool" },
+  { tool: "pencil" as const, icon: "pencil" as const, label: "Pencil", keys: "⇧P", feature: "tools/pencil-tool" },
+];
+const TEXT = [
+  { tool: "text" as const, icon: "text" as const, label: "Text", keys: "T" },
+  { tool: "text-path", icon: "text" as const, label: "Text on path", keys: "", feature: "tools/text-on-a-path-tool" },
+];
+const COMMENT = [
+  { tool: "comment" as const, icon: "comment" as const, label: "Comment", keys: "C", feature: "tools/comment-tool" },
+  { tool: "annotation", icon: "comment" as const, label: "Annotation", keys: "Y", feature: "tools/annotation-tool" },
+  { tool: "measurement", icon: "comment" as const, label: "Measurement", keys: "⇧M", feature: "tools/measurement-tool" },
+];
+const ICON_OF: Record<string, "move" | "hand" | "scale" | "frame" | "section" | "slice" | "rectangle" | "line" | "arrow" | "ellipse" | "polygon" | "star" | "image" | "pen" | "pencil"> = {
+  move: "move",
+  hand: "hand",
+  scale: "scale",
+  frame: "frame",
+  section: "section",
+  slice: "slice",
+  rectangle: "rectangle",
+  line: "line",
+  arrow: "arrow",
+  ellipse: "ellipse",
+  polygon: "polygon",
+  star: "star",
+  image: "image",
+  pen: "pen",
+  pencil: "pencil",
+};
+
+export function Toolbar() {
+  return (
+    <div
+      data-pd-toolbar
+      class="pointer-events-auto absolute bottom-3 left-1/2 z-20 flex h-12 -translate-x-1/2 items-center gap-2 rounded-[13px] bg-[var(--pd-bg)] px-2 shadow-[var(--pd-toolbar-shadow)]"
+    >
+      {returnBarShown() && (
+        <div data-pd-return class="absolute bottom-14 left-1/2 flex h-10 -translate-x-1/2 items-center gap-1 rounded-[10px] bg-[var(--pd-bg)] pl-1 shadow-[var(--pd-toolbar-shadow)]">
+          <button type="button" class="flex h-8 w-8 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]" title={Publr.t("Return to instance")} onClick={() => returnToInstance()}>
+            <PdIcon name="return" />
+          </button>
+          <button type="button" class="h-7 rounded-[5px] border border-[var(--pd-border)] px-2 text-[11px] text-[var(--pd-text)] hover:bg-[var(--pd-bg-2)]" onClick={() => returnToInstance()}>
+            {Publr.t("Return to instance")}
+          </button>
+          <span class="ml-1 h-10 w-px bg-[var(--pd-border)]"></span>
+          <button type="button" class="flex h-10 w-9 items-center justify-center text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] rounded-r-[10px]" title={Publr.t("Close")} onClick={() => closeReturn()}>
+            <PdIcon name="close" />
+          </button>
+        </div>
+      )}
+      {canvasNotice.text && (
+        <div role="status" data-pd-notice class="pointer-events-none absolute bottom-14 left-1/2 w-max max-w-[480px] -translate-x-1/2 rounded-[8px] bg-[var(--pd-bg)] px-3 py-2 text-[11px] leading-4 text-[var(--pd-text)] shadow-[var(--pd-toolbar-shadow)]">
+          {canvasNotice.text}
+        </div>
+      )}
+      <ToolGroup tool={shell.moveTool} icon={ICON_OF[shell.moveTool] ?? "move"} label={Publr.t("Move")} items={MOVE} />
+      <ToolGroup tool={shell.frameTool} icon={ICON_OF[shell.frameTool] ?? "frame"} label={Publr.t("Frame")} items={FRAME} />
+      <ToolGroup tool={shell.shapeTool} icon={ICON_OF[shell.shapeTool] ?? "rectangle"} label={Publr.t("Shapes")} items={SHAPES} />
+      <ToolGroup tool={shell.penTool} icon={ICON_OF[shell.penTool] ?? "pen"} label={Publr.t("Pen")} items={PEN} />
+      <ToolGroup tool="text" icon="text" label={Publr.t("Text")} items={TEXT} />
+      <button
+        type="button"
+        class="flex h-8 w-8 items-center justify-center rounded-[5px] text-[var(--pd-icon)] opacity-40 hover:bg-[var(--pd-bg-2)] hover:opacity-70"
+        title={Publr.t("Code layer: not built yet, upvote it")}
+        data-pd-tool="code-layer"
+        onClick={() => openRequest("ai/code-layers")}
+      >
+        <PdIcon name="code-layer" />
+      </button>
+      <ToolGroup tool="comment" icon="comment" label={Publr.t("Comment")} items={COMMENT} />
+      <button
+        type="button"
+        class="flex h-8 w-8 items-center justify-center rounded-[5px] text-[var(--pd-icon)] opacity-40 hover:bg-[var(--pd-bg-2)] hover:opacity-70"
+        title={Publr.t("Actions: not built yet, upvote it")}
+        data-pd-tool="actions"
+        onClick={() => openRequest("tools/actions-menu")}
+      >
+        <PdIcon name="actions" />
+      </button>
+      <span class="h-12 w-px bg-[var(--pd-border)]"></span>
+      <div class="flex h-8 items-center gap-0.5 rounded-[8px] bg-[var(--pd-toolbar-group)] p-0.5" role="group" aria-label={Publr.t("Mode")}>
+        <button type="button" class="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--pd-text-2)] opacity-40 hover:opacity-70" title={Publr.t("Draw")} data-pd-mode="draw" onClick={() => openRequest("tools/draw-mode")}>
+          <PdIcon name="draw" />
+        </button>
+        <button type="button" class={["flex h-7 w-7 items-center justify-center rounded-[6px]", shell.mode === "design" ? "bg-[var(--pd-toolbar-active)] text-[var(--pd-brand)]" : "text-[var(--pd-text-2)]"]} title={Publr.t("Design")} data-pd-mode="design" onClick={() => (shell.mode = "design")}>
+          <PdIcon name="design" />
+        </button>
+        <button type="button" class="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--pd-text-2)] opacity-40 hover:opacity-70" title={Publr.t("Motion")} data-pd-mode="motion" onClick={() => openRequest("tools/motion-mode")}>
+          <PdIcon name="motion" />
+        </button>
+        <button type="button" class="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--pd-text-2)] opacity-40 hover:opacity-70" title={Publr.t("Developer handoff")} data-pd-mode="dev" onClick={() => openRequest("tools/developer-handoff-mode")}>
+          <PdIcon name="dev" />
+        </button>
+      </div>
+    </div>
+  );
+}

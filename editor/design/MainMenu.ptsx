@@ -1,0 +1,154 @@
+// The main menu, from the mark at the top of the rail, after Figma Design's: Back to
+// files, the Actions… search (Cmd+K), the editor's menus (File … Vector), Plugins,
+// Widgets, Preferences, Libraries, Help and account. Every item is an action of
+// actions.ts: it runs what the editor does with the same key, shows greyed when it does
+// not apply or is not built yet, and shows its tick when it is a toggle. Typing in the
+// search lists the actions whose name holds the text; Enter runs the first.
+import { Publr } from "publr-jsx";
+import { DropdownMenu, search, state as menu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { DropdownMenuSubTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuSubTrigger.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { navigate } from "../app/route";
+import { findActions, HELP, isSubmenu, keyOf, MENUS, requestable, runAction, usable } from "./actions";
+import type { Action, Entry } from "./actions";
+import { PdIcon } from "./PdIcon.ptsx";
+
+/** Cmd+K (Ctrl+K): the menu opens at its search. */
+const actionsKey = (event: KeyboardEvent) => (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.code === "KeyK";
+
+type ActionItemProps = { action: Action };
+
+/** One action's row: its tick, its name, its key; greyed when it cannot run now. A
+ * feature not built yet is greyed too, but chosen it opens its feature request (the
+ * upvote mark says so). */
+function ActionItem({ action }: ActionItemProps) {
+  return (
+    <DropdownMenuItem size="xs" disabled={!usable(action) && !requestable(action)} onClick={() => runAction(action)}>
+      <span class="flex w-4 shrink-0 items-center">{action.checked?.() ? <PdIcon name="check" size={16} /> : ""}</span>
+      <span class={["min-w-0 flex-1 truncate", requestable(action) ? "opacity-40" : ""]}>{Publr.t(action.label)}</span>
+      <span class={["shrink-0 pl-3", requestable(action) ? "opacity-30" : "opacity-60"]}>{keyOf(action)}</span>
+      {requestable(action) && (
+        <span class="-mr-1 flex shrink-0 items-center pl-1 opacity-60" title={Publr.t("Not built yet: upvote it")} data-pd-requestable>
+          <PdIcon name="upvote" size={16} />
+        </span>
+      )}
+    </DropdownMenuItem>
+  );
+}
+
+type EntriesProps = { items: Entry[] };
+
+/** A menu's rows: actions, lines, and submenus of actions. */
+function Entries({ items }: EntriesProps) {
+  return (
+    <div>
+      {items.map((entry, k) =>
+        entry === "-" ? (
+          <DropdownMenuSeparator key={k} size="xs" />
+        ) : isSubmenu(entry) ? (
+          <DropdownMenu key={k} sub>
+            <DropdownMenuSubTrigger size="xs">
+              <span class="w-4 shrink-0"></span>
+              {Publr.t(entry.label)}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuContent align="sub" size="xs" classes="w-[240px]">
+              {entry.items.map((a, j) => (a === "-" ? <DropdownMenuSeparator key={j} size="xs" /> : <ActionItem key={a.id} action={a} />))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <ActionItem key={entry.id} action={entry} />
+        ),
+      )}
+    </div>
+  );
+}
+
+type SubmenuProps = { label: string; items: Entry[] };
+
+function Submenu({ label, items }: SubmenuProps) {
+  return (
+    <DropdownMenu sub>
+      <DropdownMenuSubTrigger size="xs">{Publr.t(label)}</DropdownMenuSubTrigger>
+      <DropdownMenuContent align="sub" size="xs" classes="w-[260px]">
+        <Entries items={items} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** What the open menu shows: the search, and the menus, or the actions found. */
+function MainMenuBody() {
+  return (
+    <div>
+      {menu.query.trim() === "" && (
+        <div>
+          <DropdownMenuItem size="xs" onClick={() => navigate("/")}>
+            {Publr.t("Back to files")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator size="xs" />
+        </div>
+      )}
+      <div data-part="search" class="flex h-6 items-center gap-2 rounded-[5px] px-2 text-popover-foreground">
+        <PdIcon name="search" size={16} classes="shrink-0 opacity-60" />
+        <input
+          type="text"
+          role="searchbox"
+          class="h-6 min-w-0 flex-1 bg-transparent text-[11px] outline-none placeholder:text-popover-foreground/60"
+          placeholder={Publr.t("Actions…")}
+          aria-label={Publr.t("Actions")}
+          autocomplete="off"
+          onInput={search}
+        />
+        <span class="shrink-0 opacity-60">⌘K</span>
+      </div>
+      <DropdownMenuSeparator size="xs" />
+      {menu.query.trim() === "" ? (
+        <div>
+          {MENUS.slice(0, 7).map((m) => (
+            <Submenu key={m.label} label={m.label} items={m.items} />
+          ))}
+          <DropdownMenuSeparator size="xs" />
+          {MENUS.slice(7).map((m) => (
+            <Submenu key={m.label} label={m.label} items={m.items} />
+          ))}
+          <DropdownMenuItem size="xs" disabled>
+            {Publr.t("Libraries")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator size="xs" />
+          <Submenu label="Help and account" items={HELP} />
+        </div>
+      ) : (
+        <div>
+          {findActions(menu.query).map((a) => (
+            <ActionItem key={a.id} action={a} />
+          ))}
+          {findActions(menu.query).length === 0 && (
+            <DropdownMenuItem size="xs" disabled>
+              {Publr.t("No matching actions")}
+            </DropdownMenuItem>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function MainMenu() {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        label={Publr.t("Main menu")}
+        openOn={actionsKey}
+        classes="flex h-8 w-8 items-center justify-center rounded-[8px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-select)]"
+      >
+        <PdIcon name="mark" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent size="xs" classes="w-[220px]">
+        <MainMenuBody />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

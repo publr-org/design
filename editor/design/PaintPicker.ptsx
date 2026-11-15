@@ -1,0 +1,81 @@
+// The colour picker floating beside the Design tab, after the editor's: a title row
+// (Custom, the close button), the paint's type (solid and the gradients) for fills and
+// strokes, a gradient's stops, then the colour square, the eyedropper and the hue and
+// opacity sliders, and the hex value and opacity typed.
+import { Publr } from "publr-jsx";
+import { ColorPicker } from "../../../ui/src/components/ColorPicker/ColorPicker.ptsx";
+import { GradientStops } from "../../../ui/src/components/ColorPicker/GradientStops.ptsx";
+import { FloatingPanel } from "../../../ui/src/components/FloatingPanel/FloatingPanel.ptsx";
+import { IconButton } from "./IconButton.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import { addStop, closePicker, eyedrop, moveStop, pick, picker, pickStop, removeStop, setType, typedAlpha, typedHex } from "./picker";
+
+const TYPES = [
+  { key: "solid", label: "Solid" },
+  { key: "linear", label: "Linear" },
+  { key: "radial", label: "Radial" },
+  { key: "angular", label: "Angular" },
+  { key: "diamond", label: "Diamond" },
+];
+
+export function PaintPicker() {
+  return (
+    <div data-pd-picker hidden={!picker.open}>
+      {picker.open && (
+        <FloatingPanel top={picker.top} left={picker.left} width={248} label={Publr.t("Colour")} classes="!p-0">
+          <div class="flex h-10 items-center border-b border-[var(--pd-menu-line)] pr-2 pl-4 text-[11px] font-[550]">
+            <span class="flex-1">{Publr.t("Custom")}</span>
+            <button type="button" class="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-white/10" title={Publr.t("Close")} onClick={() => closePicker()}>
+              <PdIcon name="close" />
+            </button>
+          </div>
+          <div class="flex flex-col gap-3 p-2">
+            {(picker.target === "fills" || picker.target === "strokes") && (
+              <div class="flex h-6 items-center gap-0.5" role="group" data-pd-paint-types>
+                {TYPES.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    class={["h-6 rounded-[5px] px-[5px] text-[11px]", picker.type === t.key ? "bg-white/15 font-[550]" : "text-white/70 hover:bg-white/10"]}
+                    aria-pressed={picker.type === t.key}
+                    data-pd-paint-type={t.key}
+                    onClick={() => setType(t.key)}
+                  >
+                    {Publr.t(t.label)}
+                  </button>
+                ))}
+              </div>
+            )}
+            {picker.type !== "solid" && picker.stops.length > 0 && (
+              <GradientStops
+                stops={picker.stops}
+                background={picker.bar}
+                selected={picker.stop}
+                onSelect={(e: CustomEvent<number>) => pickStop(e.detail)}
+                onMove={(e: CustomEvent<{ index: number; at: number; phase: "start" | "move" | "end" }>) => moveStop(e.detail.index, e.detail.at, e.detail.phase)}
+                onAdd={(e: CustomEvent<number>) => addStop(e.detail)}
+                onRemove={(e: CustomEvent<number>) => removeStop(e.detail)}
+              />
+            )}
+            {picker.type === "image" || picker.type === "pattern" ? (
+              <div class="px-2 py-4 text-white/60">{Publr.t("Image and pattern fills are edited later.")}</div>
+            ) : (
+              <ColorPicker
+                hue={picker.h}
+                saturation={picker.s}
+                brightness={picker.v}
+                alpha={picker.a}
+                hex={picker.hex}
+                onPick={(e: CustomEvent<{ hue: number; saturation: number; brightness: number; alpha: number; phase: "start" | "move" | "end" }>) => pick(e.detail.hue, e.detail.saturation, e.detail.brightness, e.detail.alpha, e.detail.phase)}
+                onHex={(e: CustomEvent<string>) => typedHex(e.detail)}
+                onAlpha={(e: CustomEvent<number>) => typedAlpha(e.detail)}
+              >
+                {picker.eyedropper ? <IconButton icon="eyedropper" title={Publr.t("Pick a colour from the screen")} classes="text-white hover:bg-white/10" onClick={() => void eyedrop()} /> : <span></span>}
+              </ColorPicker>
+            )}
+          </div>
+        </FloatingPanel>
+      )}
+    </div>
+  );
+}

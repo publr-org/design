@@ -1,0 +1,39 @@
+// The splash over the whole window while a file opens, as Figma Design's: a flat field,
+// Publr's mark a little above the middle and a thin bar under it that fills as the file
+// comes in (viewer/progress.ts). It fades out once the first page is drawn; the rest
+// sharpens behind it. When the file cannot open, the bar gives way to why and the way
+// back to the files. Its colours follow the theme (shell.css, `data-pd-splash`), as the
+// page's own first paint does before any script runs. Shown while `loading.shown`
+// (the shell mounts it so).
+import { Publr } from "publr-jsx";
+import { Link } from "../../../ui/src/components/Link/Link.ptsx";
+import { loading } from "../viewer/progress";
+import { PdIcon } from "./PdIcon.ptsx";
+
+export type SplashProps = {
+  /** Over a box of its own (the picture-in-picture) rather than the whole window. */
+  inline?: boolean;
+};
+
+export function Splash({ inline = false }: SplashProps) {
+  return (
+    <div data-pd-splash data-leaving={loading.leaving ? "" : undefined} class={["flex items-center justify-center", inline ? "absolute inset-x-0 top-8 bottom-0 z-[25] rounded-b-[10px]" : "fixed inset-0 z-[90]"]}>
+      <div class="relative -mt-10 flex flex-col items-center">
+        <PdIcon name="mark" size={28} classes="text-[var(--pd-splash-mark)]" />
+        {loading.error ? (
+          <div role="alert" data-pd-splash-error class="absolute top-full mt-4 flex w-[320px] flex-col items-center gap-2 text-center">
+            <p class="text-[13px] leading-5 font-semibold text-[var(--pd-splash-mark)]">{Publr.t("This file could not be opened")}</p>
+            <p class="text-[11px] leading-4 text-[var(--pd-text-2)]">{loading.error}</p>
+            <Link href="/" variant="label-sm-strong" classes="mt-1">
+              {Publr.t("Back to files")}
+            </Link>
+          </div>
+        ) : (
+          <div role="progressbar" aria-label={Publr.t("Opening the file")} aria-valuemin="0" aria-valuemax="100" aria-valuenow={String(Math.round(loading.progress * 100))} data-pd-splash-bar class="absolute top-full mt-4 h-[3px] w-[116px] overflow-hidden rounded-full">
+            <div data-pd-splash-fill class="h-full rounded-full" style={{ width: `${loading.progress * 100}%` }}></div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

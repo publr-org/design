@@ -1,0 +1,149 @@
+/* The editor shell's tokens, light and dark, measured from Figma Design's UI on screen
+   (UI3, 2026-10). `html.pd` is set while a file is open (design/Design.ptsx); `pd-dark`
+   picks the dark set. The shell's classes read these through arbitrary values
+   (`bg-[var(--pd-bg)]`); the ui library's own tokens are pointed at them too, so its
+   menus look like the editor's. */
+
+@font-face {
+  font-family: "PD Inter";
+  src: url("/shell/inter.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: oblique 0deg 10deg;
+  font-display: swap;
+}
+
+html.pd {
+  color-scheme: light;
+  --pd-bg: #ffffff;
+  --pd-bg-2: #f5f5f5;
+  --pd-bg-3: #e6e6e6;
+  --pd-border: #e6e6e6;
+  --pd-text: rgba(0, 0, 0, 0.9);
+  --pd-text-2: rgba(0, 0, 0, 0.5);
+  --pd-text-3: rgba(0, 0, 0, 0.3);
+  --pd-icon: rgba(0, 0, 0, 0.9);
+  --pd-brand: #0d99ff;
+  --pd-on-brand: #ffffff;
+  --pd-select: #e5f4ff;
+  --pd-select-tint: #f2f9ff;
+  --pd-select-text: rgba(0, 0, 0, 0.9);
+  --pd-component: #8638e5;
+  --pd-component-select: #f1e5ff;
+  --pd-component-tint: #f8f2ff;
+  --pd-menu: #1e1e1e;
+  --pd-menu-text: #ffffff;
+  --pd-menu-text-2: rgba(255, 255, 255, 0.6);
+  --pd-menu-line: #383838;
+  --pd-toolbar-group: #f5f5f5;
+  --pd-toolbar-active: #ffffff;
+  --pd-toolbar-shadow: 0 0 0.5px rgba(0, 0, 0, 0.18), 0 3px 8px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.1);
+  --pd-canvas: #f5f5f5;
+  /* The tab bar (Publr Studio's): the bar, a hovered tab; the shown tab is --pd-bg. */
+  --pd-tabbar: #eceef0;
+  --pd-tab-hover: #e4e6e9;
+  --pd-ruler: #ffffff;
+  --pd-ruler-text: rgba(0, 0, 0, 0.5);
+  --pd-ruler-select: #e5f4ff;
+  --pd-scroll: rgba(0, 0, 0, 0.25);
+  --pd-splash: #ffffff;
+  --pd-splash-mark: rgba(0, 0, 0, 0.9);
+  --pd-splash-track: rgba(0, 0, 0, 0.1);
+  --pd-splash-fill: rgba(0, 0, 0, 0.7);
+  --pd-danger: #f24822;
+
+  /* The ui library's tokens, for its menus and toasts inside the shell. */
+  --popover: var(--pd-menu);
+  --popover-foreground: var(--pd-menu-text);
+  --ui-accent: var(--pd-brand);
+  --foreground: var(--pd-text);
+  --background: var(--pd-bg);
+  --border: var(--pd-border);
+  --muted-foreground: var(--pd-text-2);
+  --primary: var(--pd-brand);
+}
+
+html.pd.pd-dark {
+  color-scheme: dark;
+  --pd-bg: #2c2c2c;
+  --pd-bg-2: #383838;
+  --pd-bg-3: #444444;
+  --pd-border: #444444;
+  --pd-text: #ffffff;
+  --pd-text-2: rgba(255, 255, 255, 0.7);
+  --pd-text-3: rgba(255, 255, 255, 0.4);
+  --pd-icon: #ffffff;
+  --pd-brand: #0c8ce9;
+  --pd-on-brand: #ffffff;
+  --pd-select: #394360;
+  --pd-select-tint: #32394d;
+  --pd-select-text: #ffffff;
+  --pd-component: #c29df0;
+  --pd-component-select: #4a3d66;
+  --pd-component-tint: #3b3446;
+  --pd-menu: #1e1e1e;
+  --pd-menu-text: #ffffff;
+  --pd-menu-text-2: rgba(255, 255, 255, 0.6);
+  --pd-menu-line: #383838;
+  --pd-toolbar-group: #444444;
+  --pd-toolbar-active: #2c2c2c;
+  --pd-toolbar-shadow: 0 0 0.5px rgba(0, 0, 0, 0.5), 0 3px 10px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --pd-canvas: #1e1e1e;
+  --pd-tabbar: #1e1e1e;
+  --pd-tab-hover: #252525;
+  --pd-ruler: #2c2c2c;
+  --pd-ruler-text: rgba(255, 255, 255, 0.5);
+  --pd-ruler-select: #394360;
+  --pd-scroll: rgba(255, 255, 255, 0.3);
+  --pd-splash: #1e1e1e;
+  --pd-splash-mark: #ffffff;
+  --pd-splash-track: rgba(255, 255, 255, 0.2);
+  --pd-splash-fill: rgba(255, 255, 255, 0.85);
+  --pd-danger: #e03e1a;
+}
+
+html.pd body {
+  background: var(--pd-bg);
+  color: var(--pd-text);
+  font-family: "PD Inter", Inter, system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.005em;
+  font-feature-settings: "cv11" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The page's first paint on a file's address, before any script runs: the splash's
+   field (the head's boot script sets `pd-boot` with the theme; the shell drops it). */
+html.pd.pd-boot body {
+  background: var(--pd-splash);
+}
+
+/* The splash while a file opens (design/Splash.ptsx). */
+html.pd [data-pd-splash] {
+  background: var(--pd-splash);
+  transition: opacity 150ms ease-out;
+}
+html.pd [data-pd-splash][data-leaving] {
+  opacity: 0;
+  pointer-events: none;
+}
+html.pd [data-pd-splash-bar] {
+  background: var(--pd-splash-track);
+}
+html.pd [data-pd-splash-fill] {
+  background: var(--pd-splash-fill);
+  transition: width 200ms ease-out;
+}
+
+/* Number fields: no spinners, as the editor's. */
+html.pd [data-pd-number]::-webkit-inner-spin-button,
+html.pd [data-pd-number]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Thin scrollbars that show over the panels, as the editor's. */
+html.pd [data-pd-scroll] {
+  scrollbar-width: thin;
+  scrollbar-color: var(--pd-scroll) transparent;
+}

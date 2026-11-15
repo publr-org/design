@@ -1,0 +1,102 @@
+// The design system's left side, in PublrDesign's shell (no rail: the main menu is at
+// the left of the workspace's tab bar): the panel with the builder's categories in the builder's
+// order: Overview and Moodboard, then Library, Semantic layer, Defaults and System.
+// Overview shows the whole system on the canvas; a category narrows the canvas to its
+// section; Moodboard opens the project's board in its tab. The header names the project
+// (a menu of the demos Bring in seeded).
+import { Publr } from "publr-jsx";
+import { Icon } from "../../../ui/src/components/Icon/Icon.ptsx";
+import type { IconName } from "../../../ui/src/components/Icon/Icon.ptsx";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { PdIcon } from "../design/PdIcon.ptsx";
+import { GROUPS } from "./model";
+import type { SectionKey } from "./model";
+import { demoProjects, openMoodboard, showSection, sys } from "./store";
+
+const demos = Publr.reactive({ list: [] as { key: string; name: string; project: string }[] });
+
+/** Opens a demo's project (seeded on first use) on its design system tab. */
+function openDemo(d: { key: string; project: string }): void {
+  if (d.project && d.project === sys.project) return;
+  location.href = d.project ? `/system/${d.project}` : `/?system=${d.key}`;
+}
+
+function Row({ label, page, icon }: { label: string; page: "overview" | SectionKey; icon: string }) {
+  return (
+    <button
+      type="button"
+      class={["flex h-8 w-full items-center gap-2 rounded-[5px] px-2 text-left text-[11px]", sys.section === page ? "bg-[var(--pd-select)] font-[550] text-[var(--pd-text)]" : "text-[var(--pd-text)] hover:bg-[var(--pd-bg-2)]"]}
+      data-pd-system-nav={page}
+      onClick={() => showSection(page)}
+    >
+      <span class="flex w-4 shrink-0 items-center justify-center text-[var(--pd-icon)]">
+        <Icon name={icon as IconName} size="sm" />
+      </span>
+      <span class="min-w-0 flex-1 truncate">{label}</span>
+    </button>
+  );
+}
+
+export function SystemPanel() {
+  Publr.effect(() => {
+    void sys.project;
+    void demoProjects().then((l) => (demos.list = l));
+  });
+  return (
+    <div data-pd-left data-pd-system-left class="flex h-full shrink-0 text-[11px] text-[var(--pd-text)]">
+      <aside class="flex h-full w-[246px] shrink-0 flex-col border-r border-[var(--pd-border)] bg-[var(--pd-bg)]">
+        <header class="flex h-16 shrink-0 flex-col gap-1 border-b border-[var(--pd-border)] pt-[11px] pr-2 pl-4">
+          <div class="flex h-6 items-center">
+            <span class="truncate text-[13px] font-[550]" data-pd-system-title>
+              {Publr.t("Design system")}
+            </span>
+          </div>
+          <div class="flex h-4 min-w-0 items-center gap-1 text-[11px] text-[var(--pd-text-2)]">
+            <DropdownMenu classes="flex min-w-0">
+              <DropdownMenuTrigger classes="-ml-1 flex min-w-0 items-center gap-0.5 rounded-[4px] px-1 hover:bg-[var(--pd-bg-2)]" label={Publr.t("Project")}>
+                <span class="truncate" data-pd-system-project>
+                  {sys.projectName}
+                </span>
+                <PdIcon name="chevron-down" size={16} classes="shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent size="xs" align="left">
+                <div class="w-[200px]">
+                  {demos.list.map((d) => (
+                    <DropdownMenuItem key={d.key} size="xs" onClick={() => openDemo(d)}>
+                      <span class="w-4">{d.project === sys.project ? "✓" : ""}</span>
+                      <span class="min-w-0 flex-1 truncate" data-pd-demo={d.key}>
+                        {d.name}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {sys.saved === "saving" && <span class="shrink-0">· {Publr.t("Saving…")}</span>}
+          </div>
+        </header>
+        <nav data-pd-scroll class="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pt-2 pb-4" aria-label={Publr.t("Design system")}>
+          <Row label={Publr.t("Overview")} page="overview" icon="sparkles" />
+          <button type="button" class="flex h-8 w-full items-center gap-2 rounded-[5px] px-2 text-left text-[11px] hover:bg-[var(--pd-bg-2)]" data-pd-system-nav="moodboard" onClick={() => void openMoodboard()}>
+            <span class="flex w-4 shrink-0 items-center justify-center text-[var(--pd-icon)]">
+              <Icon name={"moodboard" as IconName} size="sm" />
+            </span>
+            <span class="min-w-0 flex-1 truncate">{Publr.t("Moodboard")}</span>
+
+          </button>
+          {GROUPS.map((g) => (
+            <div key={g.key} class="mt-2">
+              <h3 class="flex h-8 items-center px-2 text-[11px] font-[550] tracking-[0.02em] text-[var(--pd-text-2)] uppercase">{g.label}</h3>
+              {g.sections.map((s) => (
+                <Row key={s.key} label={s.label} page={s.key} icon={s.icon} />
+              ))}
+            </div>
+          ))}
+        </nav>
+      </aside>
+    </div>
+  );
+}

@@ -1,0 +1,18 @@
+// One of the editor's icons (icons.ts): a 24 px box by default, drawn in the current
+// colour, at its size even in a narrower slot (the slot's negative margins centre it).
+import type { PdIconName } from "./icons";
+
+export type PdIconProps = {
+  name: PdIconName;
+  /** CSS px (default 24). */
+  size?: number;
+  classes?: string;
+};
+
+export function PdIcon({ name, size = 24, classes = "" }: PdIconProps) {
+  return (
+    <svg class={["max-w-none shrink-0", classes]} width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" data-pd-icon={name}>
+      <use href={`#pd-icon-${name}`} />
+    </svg>
+  );
+}

@@ -1,0 +1,44 @@
+// A row of icon choices on the panel's second colour (alignment, flow, text alignment,
+// resizing): the chosen one raised in the panel's colour with a line around it.
+import { PdIcon } from "./PdIcon.ptsx";
+import type { PdIconName } from "./icons";
+
+export type SegItem = { key: string; icon: PdIconName; title: string };
+
+export type SegProps = {
+  items: SegItem[];
+  /** The chosen key ("" : none, as alignment). */
+  value?: string;
+  /** Spread over the row's width (otherwise 24 px a choice). */
+  fill?: boolean;
+  classes?: string;
+  name?: string;
+  disabled?: boolean;
+  onPick?: (key: string) => void;
+};
+
+export function Seg({ items, value = "", fill = false, classes = "", name = "", disabled = false, onPick }: SegProps) {
+  return (
+    <div class={["flex h-6 items-stretch rounded-[5px] bg-[var(--pd-bg-2)]", fill ? "w-full" : "", disabled ? "opacity-40" : "", classes]} role="group" data-pd-seg={name}>
+      {items.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          class={[
+            "flex min-w-0 items-center justify-center rounded-[5px] text-[var(--pd-icon)]",
+            fill ? "flex-1" : "w-6",
+            item.key === value ? "bg-[var(--pd-bg)] outline outline-1 -outline-offset-1 outline-[var(--pd-border)]" : "hover:bg-[var(--pd-bg-3)]",
+          ]}
+          title={item.title}
+          aria-label={item.title}
+          aria-pressed={item.key === value}
+          disabled={disabled}
+          data-pd-seg-item={item.key}
+          onClick={() => onPick?.(item.key)}
+        >
+          <PdIcon name={item.icon} />
+        </button>
+      ))}
+    </div>
+  );
+}

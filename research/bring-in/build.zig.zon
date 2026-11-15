@@ -1,0 +1,16 @@
+.{
+    .name = .bring_in,
+    .version = "0.0.0",
+    .fingerprint = 0x5ac61495649d9ec4,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .publr_engine = .{
+            .path = "../../engine",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

@@ -1,0 +1,40 @@
+// PublrDesign in the browser: the file browser, the editor (its shell around the
+// viewer) and Content mode (a site's page on the same shell), one shown at a time as the
+// route says (route.ts), and the toast for what runs in the background (imports). The
+// file browser and the editor stay mounted and the hidden one waits: the viewer keeps
+// its engine workers between files. Content mode is mounted while it shows.
+import { Toast } from "../../../ui/src/components/Toast/Toast.ptsx";
+import { Home } from "../home/Home.ptsx";
+import { Design } from "../design/Design.ptsx";
+import { ContentMode } from "../content/ContentMode.ptsx";
+import { route } from "./route";
+
+export type AppProps = {
+  /** Render workers (see the viewer). */
+  workers?: number;
+  /** The viewer's tile cache cap, MiB. */
+  cacheMiB?: number;
+  /** Draw on the GPU (default: when the browser has WebGPU). */
+  gpu?: boolean;
+  /** The viewer's numbers over the canvas. */
+  hud?: boolean;
+};
+
+export function App(props: AppProps) {
+  return (
+    <div class="relative h-full">
+      <div class="h-full" hidden={route.screen !== "home"}>
+        <Home />
+      </div>
+      <div class="h-full" hidden={route.screen !== "file"}>
+        <Design workers={props.workers} cacheMiB={props.cacheMiB} gpu={props.gpu} hud={props.hud} />
+      </div>
+      {route.screen === "content" && (
+        <div class="h-full">
+          <ContentMode doc={route.contentDoc} />
+        </div>
+      )}
+      {route.toast && <Toast classes="fixed bottom-6 left-1/2 z-[80] max-w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2">{route.toast}</Toast>}
+    </div>
+  );
+}

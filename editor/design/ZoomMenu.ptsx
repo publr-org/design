@@ -1,0 +1,79 @@
+// The zoom menu at the right of the Design tab's bar: the zoom shown ("60%"); in the
+// menu a field taking a zoom ("150", "150%"), then Zoom in, Zoom out, Zoom to fit, 50%,
+// 100%, 200%, and the canvas's guides: layout guides and rulers.
+import { Publr } from "publr-jsx";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import { shell, toggleGuides, toggleRulers, zoomBy, zoomFit, zoomValue } from "./store";
+
+/** Enter in the zoom field: that zoom (a percentage). */
+function typed(event: KeyboardEvent): void {
+  if (event.key !== "Enter") return;
+  const n = Number.parseFloat((event.currentTarget as HTMLInputElement).value);
+  if (Number.isFinite(n) && n > 0) zoomValue(n / 100);
+}
+
+export function ZoomMenu() {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger classes="flex h-6 items-center rounded-[5px] pr-0.5 pl-2 text-[11px] text-[var(--pd-text)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-select)] aria-expanded:text-[var(--pd-brand)]">
+        <span data-pd-zoom class="tabular-nums">{shell.zoomLabel}</span>
+        <PdIcon name="chevron-down" size={20} classes="-ml-0.5" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="right" size="xs" classes="w-[200px]">
+        <div class="px-2 pt-1 pb-2" data-part="search">
+          <input
+            class="h-7 w-full rounded-[5px] bg-transparent px-2 text-[11px] text-white outline outline-1 -outline-offset-1 outline-[#0c8ce9]"
+            value={shell.zoomLabel}
+            aria-label={Publr.t("Zoom")}
+            onKeyDown={(event: KeyboardEvent) => typed(event)}
+          />
+        </div>
+        <DropdownMenuSeparator size="xs" />
+        <DropdownMenuItem size="xs" onClick={() => zoomBy(2)}>
+          <span class="w-4"></span>
+          <span class="flex-1">{Publr.t("Zoom in")}</span>
+          <span class="opacity-60">⌘+</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => zoomBy(0.5)}>
+          <span class="w-4"></span>
+          <span class="flex-1">{Publr.t("Zoom out")}</span>
+          <span class="opacity-60">⌘−</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => zoomFit()}>
+          <span class="w-4"></span>
+          <span class="flex-1">{Publr.t("Zoom to fit")}</span>
+          <span class="opacity-60">⇧1</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => zoomValue(0.5)}>
+          <span class="w-4"></span>
+          <span class="flex-1">{Publr.t("Zoom to 50%")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => zoomValue(1)}>
+          <span class="w-4"></span>
+          <span class="flex-1">{Publr.t("Zoom to 100%")}</span>
+          <span class="opacity-60">⌘0</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => zoomValue(2)}>
+          <span class="w-4"></span>
+          <span class="flex-1">{Publr.t("Zoom to 200%")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator size="xs" />
+        <DropdownMenuItem size="xs" onClick={() => toggleGuides()}>
+          <span class="w-4">{shell.guides ? "✓" : ""}</span>
+          <span class="flex-1">{Publr.t("Layout guides")}</span>
+          <span class="opacity-60">⇧G</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => toggleRulers()}>
+          <span class="w-4">{shell.rulers ? "✓" : ""}</span>
+          <span class="flex-1">{Publr.t("Rulers")}</span>
+          <span class="opacity-60">⇧R</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

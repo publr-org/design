@@ -1,0 +1,90 @@
+// A field of the Design tab that opens a menu of choices (constraints, blend mode, stroke
+// position, font family and style, sizing): the value shown as a field, the chevron on
+// the right; the menu marks the current choice. Long lists get a search box.
+import { Publr } from "publr-jsx";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSearch } from "../../../ui/src/components/Dropdown/DropdownMenuSearch.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import type { PdIconName } from "./icons";
+
+/** A choice; `value` "-" is a line between groups. */
+export type ChoiceItem = { value: string; label: string };
+
+export type ChoiceProps = {
+  label: string;
+  value: string;
+  items: ChoiceItem[];
+  icon?: PdIconName;
+  /** A search box over the list (font families). */
+  search?: boolean;
+  /** Shown dimmed with a warning mark (a font that is not here). */
+  missing?: boolean;
+  disabled?: boolean;
+  title?: string;
+  /** The menu's width (px). */
+  width?: number;
+  /** Only the chevron shows (beside a typed field: W and H). */
+  bare?: boolean;
+  /** Bare: a word in place of the chevron (W and H that hug or fill: "Hug", "Fill"). */
+  word?: string;
+  name?: string;
+  onPick: (value: string) => void;
+};
+
+export function Choice({ label, value, items, icon, search = false, missing = false, disabled = false, title = "", width = 200, bare = false, word = "", name = "", onPick }: ChoiceProps) {
+  return (
+    <DropdownMenu classes={bare ? "flex" : "flex min-w-0 flex-1"}>
+      <DropdownMenuTrigger
+        classes={
+          bare && word
+            ? "flex h-6 items-center rounded-r-[5px] pr-2 pl-1 text-[11px] text-[var(--pd-text)] disabled:opacity-40"
+            : bare
+            ? "flex h-6 w-5 items-center justify-center rounded-r-[5px] text-[var(--pd-text-2)] hover:text-[var(--pd-text)] disabled:opacity-40"
+            : "group/choice flex h-6 min-w-0 flex-1 items-center rounded-[5px] bg-[var(--pd-bg-2)] text-left text-[11px] text-[var(--pd-text)] outline outline-1 -outline-offset-1 outline-transparent hover:outline-[var(--pd-border)] aria-expanded:outline-[var(--pd-brand)] disabled:opacity-40"
+        }
+      >
+        {!bare && icon && (
+          <span class="flex h-6 w-6 shrink-0 items-center justify-center text-[var(--pd-text-2)]">
+            <PdIcon name={icon} />
+          </span>
+        )}
+        {!bare && (
+          <span class={["min-w-0 flex-1 truncate", icon ? "pl-0.5" : "pl-2", missing ? "italic text-[var(--pd-text-2)]" : ""]} title={missing ? Publr.t("Missing font") : title} data-pd-choice={name || label}>
+            {value}
+          </span>
+        )}
+        {!bare && missing && (
+          <span class="flex h-6 w-5 shrink-0 items-center justify-center text-[#f5a623]" title={Publr.t("Missing font")}>
+            <PdIcon name="warning" size={16} />
+          </span>
+        )}
+        {bare && word ? (
+          <span data-pd-choice-word={name || label}>{word}</span>
+        ) : (
+          <span class="flex h-6 w-5 shrink-0 items-center justify-center text-[var(--pd-text-2)]">
+            <PdIcon name="chevron-down" size={20} />
+          </span>
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent size="xs" classes="max-h-[420px]" align={bare ? "right" : "left"}>
+        <div style={{ width: `${width}px` }}>
+          {search && <DropdownMenuSearch placeholder={Publr.t("Search fonts")} />}
+          {items.map((item, k) =>
+            item.value === "-" ? (
+              <DropdownMenuSeparator key={`-${k}`} size="xs" />
+            ) : (
+              <DropdownMenuItem key={item.value} size="xs" disabled={disabled} onClick={() => onPick(item.value)}>
+                <span class="w-4">{item.value === value || item.label === value ? "✓" : ""}</span>
+                <span class="flex-1 truncate">{item.label}</span>
+              </DropdownMenuItem>
+            ),
+          )}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

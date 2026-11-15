@@ -1,0 +1,276 @@
+// The left side: the rail (the main menu, File, Assets, Tools to come, and Variables, which
+// opens the Variables window)
+// and the panel beside it: the file's name (renamed in place) and where it is, then on
+// File the pages (add, rename, drag to reorder) and the page's layers, on Assets the
+// file's components.
+import { Publr } from "publr-jsx";
+import { LayerRow } from "./LayerRow.ptsx";
+import { route } from "../app/route";
+import { MainMenu } from "./MainMenu.ptsx";
+import { MemoryBar } from "./MemoryWindow.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import type { PdIconName } from "./icons";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuContextArea } from "../../../ui/src/components/Dropdown/DropdownMenuContextArea.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { SelectionMenu } from "./SelectionMenu.ptsx";
+import { toggleVariables, vars } from "./variables";
+import { addPage, deletePage, toggleMemory, toggleMemoryWindow, duplicatePage, layersList, loadAssets, movePage, renameFile, renamePage, revealAsset, setAssetsQuery, shell, showPage, startRenamePage } from "./store";
+
+/** The page dragged, and the page a right-click was on. */
+const pageDrag = { key: "", menu: "" };
+
+/** A name field that just opened takes the keys, its text selected. */
+function focusInput(el: HTMLInputElement | null): void {
+  if (el)
+    requestAnimationFrame(() => {
+      el.focus();
+      el.select();
+    });
+}
+
+type RailKey = "file" | "agents" | "assets" | "tools" | "variables";
+
+function railItem(tab: RailKey): void {
+  if (tab === "variables") {
+    toggleVariables();
+    return;
+  }
+  if (tab === "file" || tab === "assets") {
+    shell.leftTab = tab;
+    shell.leftOpen = true;
+    if (tab === "assets") void loadAssets();
+  }
+}
+
+/** A rail item: its 32 px button, the label 3 px under it (9 px type). */
+function RailButton({ item }: { item: { key: RailKey; icon: PdIconName; label: string } }) {
+  return (
+    <button type="button" class="flex w-14 flex-col items-center" data-pd-rail-item={item.key} onClick={() => railItem(item.key)}>
+      <span
+        class={[
+          "flex h-8 w-8 items-center justify-center rounded-[8px]",
+          (shell.leftOpen && shell.leftTab === item.key) || (item.key === "variables" && vars.open) ? "bg-[var(--pd-select)] text-[var(--pd-brand)]" : "text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]",
+        ]}
+      >
+        <PdIcon name={item.icon} />
+      </span>
+      <span class="mt-[3px] h-3 text-[9px] leading-3 font-[450] text-[var(--pd-text)]">{item.label}</span>
+    </button>
+  );
+}
+
+/** View > Memory usage, after Figma's: how near the file's fullest engine is to its
+ * limit, the mark where it gets near; Manage memory opens the window of what holds it. */
+function MemoryPanel() {
+  return (
+    <section data-pd-memory class="shrink-0 border-b border-[var(--pd-border)] pt-3 pr-2 pb-4 pl-4">
+      <header class="flex h-6 items-center">
+        <h3 class="flex-1 text-[11px] font-[550]">{Publr.t("Memory usage")}</h3>
+        <button type="button" class="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-[var(--pd-bg-2)]" title={Publr.t("Close")} onClick={() => toggleMemory()}>
+          <PdIcon name="close" />
+        </button>
+      </header>
+      <div class="mt-2 flex h-4 items-center gap-3 pr-2">
+        <MemoryBar classes="min-w-0 flex-1" />
+        <span class="w-9 shrink-0 text-right tabular-nums" data-pd-memory-percent>{`${Math.round(shell.memoryUse.share * 100)}%`}</span>
+      </div>
+      <button type="button" class="mt-3 h-6 w-[222px] rounded-[5px] border border-[var(--pd-border)] hover:bg-[var(--pd-bg-2)]" aria-expanded={shell.memoryWindow} data-pd-manage-memory onClick={() => toggleMemoryWindow()}>
+        {Publr.t("Manage memory")}
+      </button>
+    </section>
+  );
+}
+
+function nameKey(event: KeyboardEvent): void {
+  const input = event.currentTarget as HTMLInputElement;
+  if (event.key === "Enter") input.blur();
+  if (event.key === "Escape") {
+    input.value = shell.fileName;
+    input.blur();
+  }
+}
+
+function pageKey(event: KeyboardEvent, key: string): void {
+  const input = event.currentTarget as HTMLInputElement;
+  if (event.key === "Enter") renamePage(key, input.value);
+  if (event.key === "Escape") renamePage(key, "");
+}
+
+export function LeftPanel() {
+  return (
+    <div data-pd-left class="flex h-full shrink-0 text-[11px] text-[var(--pd-text)]">
+      <nav data-pd-rail class="flex h-full w-14 shrink-0 flex-col items-center border-r border-[var(--pd-border)] bg-[var(--pd-bg)] pt-[7px]">
+        {!route.system && <MainMenu />}
+        {!route.system && <span class="mt-2 mb-[11px] h-px w-4 shrink-0 bg-[var(--pd-border)]"></span>}
+        <div class="flex flex-col gap-[9px]">
+          {[
+            { key: "file" as const, icon: "file" as PdIconName, label: Publr.t("File") },
+            { key: "agents" as const, icon: "agents" as PdIconName, label: Publr.t("Agents") },
+            { key: "assets" as const, icon: "assets" as PdIconName, label: Publr.t("Assets") },
+            { key: "tools" as const, icon: "tools" as PdIconName, label: Publr.t("Tools") },
+          ].map((item) => (
+            <RailButton key={item.key} item={item} />
+          ))}
+        </div>
+        <span class="mt-[13px] mb-[11px] h-px w-4 shrink-0 bg-[var(--pd-border)]"></span>
+        <RailButton item={{ key: "variables", icon: "variables", label: Publr.t("Variables") }} />
+      </nav>
+      {shell.leftOpen && (
+        <aside class="flex h-full w-[246px] shrink-0 flex-col border-r border-[var(--pd-border)] bg-[var(--pd-bg)]">
+          {shell.leftTab === "file" ? (
+            <div class="flex min-h-0 flex-1 flex-col">
+              <header class="flex h-16 shrink-0 flex-col gap-1 border-b border-[var(--pd-border)] pt-[11px] pr-2 pl-4">
+                <div class="flex h-6 items-center">
+                  {shell.renamingFile ? (
+                    <input
+                      class="h-6 min-w-0 flex-1 rounded-[5px] bg-transparent px-1 text-[13px] font-[550] outline outline-1 outline-[var(--pd-brand)]"
+                      value={shell.fileName}
+                      data-pd-file-name-input
+                      ref={focusInput}
+                      onKeyDown={(event: KeyboardEvent) => nameKey(event)}
+                      onChange={(event: Event) => renameFile(event)}
+                      onBlur={() => (shell.renamingFile = false)}
+                    />
+                  ) : (
+                    <button type="button" class="flex min-w-0 items-center text-left" data-pd-file-name onDblClick={() => (shell.renamingFile = true)} title={Publr.t("Double-click to rename")}>
+                      <span class="truncate text-[13px] font-[550]">{shell.fileName}</span>
+                      <PdIcon name="chevron-down" size={20} classes="shrink-0 text-[var(--pd-text-2)]" />
+                    </button>
+                  )}
+                  <span class="flex-1"></span>
+                  <button type="button" class="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-[var(--pd-bg-2)]" title={Publr.t("Hide sidebar")} onClick={() => (shell.leftOpen = false)}>
+                    <PdIcon name="sidebar" />
+                  </button>
+                </div>
+                <div data-pd-location class="flex h-4 min-w-0 items-center gap-1 text-[11px] text-[var(--pd-text-2)]">
+                  <span class="truncate">{shell.location}</span>
+                  {shell.notSaved && (
+                    <span class="shrink-0 truncate" data-pd-not-saved title={Publr.t("This file is served from disk: edits stay until it is opened again.")}>
+                      · {Publr.t("Changes aren't saved")}
+                    </span>
+                  )}
+                </div>
+              </header>
+              {shell.memory && <MemoryPanel />}
+              <section data-pd-pages class="shrink-0 border-b border-[var(--pd-border)] pb-2">
+                <header class="flex h-10 items-center pr-2 pl-4">
+                  <h3 class="flex-1 text-[11px] font-[550]">{Publr.t("Pages")}</h3>
+                  <button type="button" class="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-[var(--pd-bg-2)]" title={Publr.t("Search pages")}>
+                    <PdIcon name="search" />
+                  </button>
+                  <button type="button" class="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-[var(--pd-bg-2)]" title={Publr.t("Add new page")} data-pd-add-page onClick={() => addPage()}>
+                    <PdIcon name="plus" />
+                  </button>
+                </header>
+                <DropdownMenu classes="block">
+                <DropdownMenuContextArea>
+                <div data-pd-scroll class="max-h-[224px] overflow-y-auto">
+                  {shell.pages.map((p) => (
+                    <div
+                      key={p.key}
+                      class="h-8 pt-1"
+                      draggable={!p.renaming}
+                      data-pd-page={p.name}
+                      data-pd-page-current={p.current}
+                      onDragStart={() => (pageDrag.key = p.key)}
+                      onContextMenu={() => (pageDrag.menu = p.key)}
+                      onDragOver={(event: DragEvent) => event.preventDefault()}
+                      onDrop={(event: DragEvent) => {
+                        event.preventDefault();
+                        movePage(pageDrag.key, p.key);
+                      }}
+                    >
+                      {p.divider && !p.renaming ? (
+                        <div class="mx-4 flex h-6 items-center" data-pd-page-divider onDblClick={() => startRenamePage(p.key)}>
+                          <span class="h-px w-full bg-[var(--pd-border)]"></span>
+                        </div>
+                      ) : p.renaming ? (
+                        <input
+                          class="mx-2 h-6 w-[230px] rounded-[5px] bg-[var(--pd-bg)] px-2 text-[11px] outline outline-1 outline-[var(--pd-brand)]"
+                          value={p.name}
+                          ref={focusInput}
+                          onKeyDown={(event: KeyboardEvent) => pageKey(event, p.key)}
+                          onBlur={(event: Event) => renamePage(p.key, (event.currentTarget as HTMLInputElement).value)}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          class={["mx-2 flex h-6 w-[230px] items-center rounded-[5px] px-2 text-left", p.current ? "bg-[var(--pd-bg-2)] font-[550]" : "hover:bg-[var(--pd-bg-2)]"]}
+                          onClick={() => showPage(p.index)}
+                          onDblClick={() => startRenamePage(p.key)}
+                        >
+                          <span class="min-w-0 flex-1 truncate">{p.name}</span>
+                          {shell.memoryLayers && (
+                            <span class="shrink-0 pl-2 text-[var(--pd-text-2)] tabular-nums" title={shell.pageMemory[p.index] === "–" ? Publr.t("Not read yet: it takes no memory until shown") : Publr.t("What the page takes when in memory")} data-pd-page-memory>
+                              {shell.pageMemory[p.index] ?? "–"}
+                            </span>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                </DropdownMenuContextArea>
+                <DropdownMenuContent align="pointer" size="xs" classes="w-[200px]">
+                  <DropdownMenuItem size="xs" onClick={() => startRenamePage(pageDrag.menu)}>
+                    {Publr.t("Rename page")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem size="xs" onClick={() => duplicatePage(pageDrag.menu)}>
+                    {Publr.t("Duplicate page")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem size="xs" disabled={shell.pages.length <= 1} onClick={() => deletePage(pageDrag.menu)}>
+                    {Publr.t("Delete page")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+                </DropdownMenu>
+              </section>
+              <section data-pd-layers class="flex min-h-0 flex-1 flex-col">
+                <header class="flex h-10 shrink-0 items-center pr-2 pl-4">
+                  <h3 class="flex-1 text-[11px] font-[550]">{Publr.t("Layers")}</h3>
+                </header>
+                <SelectionMenu classes="relative flex min-h-0 flex-1 flex-col">
+                  <div ref={layersList} data-pd-scroll data-pd-layer-list class="relative min-h-0 flex-1 overflow-x-auto overflow-y-auto pt-1">
+                    <div class="relative" style={{ height: `${shell.listHeight}px`, minWidth: `${shell.listWidth}px` }}>
+                      {shell.rows.map((row) => (
+                        <LayerRow key={row.id} row={row} />
+                      ))}
+                      {shell.dropLine >= 0 && (
+                        <div class="pointer-events-none absolute right-2 h-0.5 rounded-full bg-[var(--pd-brand)]" style={{ top: `${shell.dropLine - 1}px`, left: `${shell.dropIndent}px` }} data-pd-drop-line></div>
+                      )}
+                    </div>
+                  </div>
+                </SelectionMenu>
+              </section>
+            </div>
+          ) : (
+            <div class="flex min-h-0 flex-1 flex-col" data-pd-assets>
+              <header class="flex h-12 shrink-0 items-center pr-2 pl-4">
+                <h3 class="flex-1 text-[13px] font-[550]">{Publr.t("Assets")}</h3>
+              </header>
+              <div class="flex shrink-0 items-center gap-2 pr-2 pl-4">
+                <label class="flex h-6 min-w-0 flex-1 items-center rounded-[5px] bg-[var(--pd-bg-2)] outline outline-1 -outline-offset-1 outline-transparent focus-within:outline-[var(--pd-brand)]">
+                  <PdIcon name="search" classes="text-[var(--pd-text-2)]" />
+                  <input class="h-6 min-w-0 flex-1 bg-transparent pr-2 text-[11px] outline-none placeholder:text-[var(--pd-text-3)]" placeholder={Publr.t("Search assets")} value={shell.assetsQuery} onInput={(event: Event) => setAssetsQuery((event.currentTarget as HTMLInputElement).value)} />
+                </label>
+              </div>
+              <div class="mt-3 shrink-0 pl-4 font-[550]">{Publr.t("Created in this file")}</div>
+              <div data-pd-scroll class="mt-1 min-h-0 flex-1 overflow-y-auto pb-4">
+                {shell.assetsLoading && <div class="px-4 py-2 text-[var(--pd-text-2)]">{Publr.t("Reading components…")}</div>}
+                {!shell.assetsLoading && shell.assets.length === 0 && <div class="px-4 py-2 text-[var(--pd-text-2)]">{Publr.t("No components in this file")}</div>}
+                {shell.assets.map((a) => (
+                  <button key={a.id} type="button" class="mx-2 flex h-8 w-[230px] items-center gap-1 rounded-[5px] px-1 text-left hover:bg-[var(--pd-bg-2)]" data-pd-asset={a.name} onClick={() => revealAsset(a.id, a.page)}>
+                    <PdIcon name={a.kind === "set" ? "l-component-set" : "l-component"} classes="text-[var(--pd-component)]" />
+                    <span class="min-w-0 flex-1 truncate">{a.name}</span>
+                    <span class="shrink-0 pr-1 text-[var(--pd-text-2)]">{a.pageName}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </aside>
+      )}
+    </div>
+  );
+}

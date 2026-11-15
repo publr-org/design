@@ -1,0 +1,115 @@
+// A row of the layers panel: 32 px, a 24 px pill (4 px in) indented 24 px a level, the chevron
+// (when it has children), the kind's icon and the name; lock and eye show on hover (and
+// stay while set) and toggle the layer. Selected rows are filled, the rows inside a
+// selection tinted, instance content purple. With Manage memory's switch on, the
+// layer's share of the memory limit shows before them. A double-click on the name renames the
+// layer; rows drag to reorder and reparent (the panel draws where they would land).
+import { PdIcon } from "./PdIcon.ptsx";
+import type { PdIconName } from "./icons";
+import { clickRow, finishRenameLayer, layerPointerDown, setHover, shell, startRenameLayer, toggleExpand, toggleRowLocked, toggleRowVisible } from "./store";
+import type { LayerRow as Row } from "./store";
+
+export type LayerRowProps = { row: Row };
+
+function focusName(el: HTMLInputElement | null): void {
+  if (el)
+    requestAnimationFrame(() => {
+      el.focus();
+      el.select();
+    });
+}
+
+function nameKey(event: KeyboardEvent, id: string): void {
+  const input = event.currentTarget as HTMLInputElement;
+  event.stopPropagation();
+  if (event.key === "Enter") finishRenameLayer(id, input.value);
+  if (event.key === "Escape") finishRenameLayer(id, null);
+}
+
+export function LayerRow({ row }: LayerRowProps) {
+  return (
+    <div
+      class="absolute right-0 left-0 h-8 select-none"
+      style={{ top: `${row.at * 32}px` }}
+      data-pd-layer={row.id}
+      onPointerEnter={() => setHover(row.id)}
+      onPointerLeave={() => setHover("")}
+      onClick={(event: MouseEvent) => clickRow(row.id, event)}
+      onContextMenu={(event: MouseEvent) => {
+        if (!row.selected) clickRow(row.id, event);
+      }}
+      onPointerDown={(event: PointerEvent) => layerPointerDown(row.id, event)}
+    >
+      {(row.tinted || row.tintBelow) && (
+        <div
+          class={[
+            "pointer-events-none absolute right-2 left-2 bg-[var(--pd-select-tint)]",
+            row.tintBelow ? "top-4" : "top-0",
+            row.tintEnd ? "bottom-1 rounded-b-[5px]" : "bottom-0",
+          ]}
+        ></div>
+      )}
+      <div
+        class={[
+          "relative mx-2 mt-1 flex h-6 items-center rounded-[5px] pl-1",
+          row.selected ? "bg-[var(--pd-select)]" : row.hovered ? (row.tinted ? "bg-[var(--pd-select)]" : "bg-[var(--pd-bg-2)]") : "",
+          shell.dropInto === row.id ? "outline outline-2 -outline-offset-2 outline-[var(--pd-brand)]" : "",
+          row.purple ? "text-[var(--pd-component)]" : "text-[var(--pd-text)]",
+          row.hidden ? "opacity-40" : "",
+        ]}
+      >
+        <span class="shrink-0" style={{ width: `${row.depth * 24}px` }}></span>
+        <button
+          type="button"
+          tabindex={-1}
+          class="flex h-6 w-4 shrink-0 items-center justify-center text-[var(--pd-text-2)]"
+          aria-label={row.expanded ? "Collapse" : "Expand"}
+          onClick={(event: MouseEvent) => (row.parent ? toggleExpand(row.id, event) : undefined)}
+        >
+          {row.parent && <PdIcon name={row.expanded ? "chevron-down" : "chevron-right"} size={20} />}
+        </button>
+        <span class="flex h-6 w-4 shrink-0 items-center justify-center">
+          <PdIcon name={row.icon as PdIconName} classes="-mx-1" />
+        </span>
+        {shell.renamingLayer === row.id ? (
+          <input
+            class="ml-1 h-5 min-w-0 flex-1 rounded-[3px] bg-[var(--pd-bg)] px-1 text-[11px] text-[var(--pd-text)] outline outline-1 outline-[var(--pd-brand)]"
+            value={row.name}
+            ref={focusName}
+            data-pd-layer-name-input
+            onClick={(event: MouseEvent) => event.stopPropagation()}
+            onKeyDown={(event: KeyboardEvent) => nameKey(event, row.id)}
+            onBlur={(event: Event) => finishRenameLayer(row.id, (event.currentTarget as HTMLInputElement).value)}
+          />
+        ) : (
+          <span class="ml-2 flex min-w-0 flex-1 items-center gap-1.5" onDblClick={(event: MouseEvent) => {
+            event.stopPropagation();
+            startRenameLayer(row.id);
+          }}>
+            <span class="min-w-0 truncate">{row.name}</span>
+            {row.badge && (
+              <span class="h-4 max-w-[96px] shrink-0 truncate rounded-[3px] border border-[var(--pd-border)] px-1 text-[10px] leading-[14px] text-[var(--pd-text-2)]" title={row.badge} data-pd-mode-badge>
+                {row.badge}
+              </span>
+            )}
+          </span>
+        )}
+        {row.memory && (
+          <span class="shrink-0 pr-2 pl-1 text-[var(--pd-text-2)] tabular-nums" data-pd-row-memory>
+            {row.memory}
+          </span>
+        )}
+        {(row.hovered || row.locked || row.hidden) && (
+          <span class="flex shrink-0 items-center">
+            <button type="button" tabindex={-1} class={["flex h-6 w-6 items-center justify-center", row.locked || row.hovered ? "" : "invisible"]} title={row.locked ? "Unlock" : "Lock"} data-pd-row-lock onClick={(event: MouseEvent) => toggleRowLocked(row.id, event)}>
+              <PdIcon name={row.locked ? "lock" : "unlock"} />
+            </button>
+            <button type="button" tabindex={-1} class={["flex h-6 w-6 items-center justify-center", row.hidden || row.hovered ? "" : "invisible"]} title={row.hidden ? "Show" : "Hide"} data-pd-row-eye onClick={(event: MouseEvent) => toggleRowVisible(row.id, event)}>
+              <PdIcon name={row.hidden ? "eye-off" : "eye"} />
+            </button>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}

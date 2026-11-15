@@ -1,0 +1,22 @@
+# secrets
+.figma-token
+
+# build output and caches
+.DS_Store
+.zig-cache/
+zig-out/
+zig-pkg/
+w/
+
+# test files and fonts kept locally: other people's designs, not ours to publish
+/complete.fig
+*.fig
+engine/corpus/
+engine/out/
+research/*/out/
+research/model-inference/*.json
+
+# progress and research notes stay local
+editor/parity.md
+research/*/REPORT.md
+research/*/plans/

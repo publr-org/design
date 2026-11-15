@@ -1,0 +1,75 @@
+// A tool of the bottom toolbar with its menu: the button shows the group's last chosen
+// tool (blue while it is the tool in hand), the chevron beside it opens the group's
+// tools with their keys. A tool not built yet shows greyed and opens its feature request.
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import type { PdIconName } from "./icons";
+import { openRequest } from "./requests";
+import { setTool, shell } from "./store";
+import type { ToolName } from "./store";
+
+/** A tool of the group; `feature`: not built yet, its feature request's key. */
+export type ToolItem = { tool: ToolName | string; icon: PdIconName; label: string; keys: string; feature?: string };
+
+/** Takes tool `item` in hand, or (not built yet) opens its feature request. */
+function choose(item: ToolItem | undefined, tool: ToolName): void {
+  if (item?.feature) return openRequest(item.feature);
+  setTool(tool);
+}
+
+export type ToolGroupProps = {
+  /** The group's button: its current tool. */
+  tool: ToolName;
+  icon: PdIconName;
+  label: string;
+  items: ToolItem[];
+};
+
+export function ToolGroup({ tool, icon, label, items }: ToolGroupProps) {
+  return (
+    <div class="flex items-center" data-pd-tool-group={items[0]?.tool ?? tool}>
+      <button
+        type="button"
+        class={[
+          "flex h-8 w-8 items-center justify-center rounded-[5px]",
+          items.some((i) => i.tool === shell.tool) ? "bg-[var(--pd-brand)] text-white" : "text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]",
+          items.find((i) => i.tool === tool)?.feature ? "opacity-40 hover:opacity-70" : "",
+        ]}
+        title={label}
+        aria-label={label}
+        aria-pressed={items.some((i) => i.tool === shell.tool)}
+        data-pd-tool={tool}
+        onClick={() => choose(items.find((i) => i.tool === tool), tool)}
+      >
+        <PdIcon name={icon} />
+      </button>
+      {items.length > 0 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger classes="flex h-8 w-[17px] items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]">
+            <PdIcon name="chevron-down" size={20} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent size="xs" classes="w-56">
+            {items.map((item) => (
+              <DropdownMenuItem key={item.tool} size="xs" onClick={() => choose(item, item.tool as ToolName)}>
+                <span class="w-4 shrink-0">{item.tool === shell.tool ? "✓" : ""}</span>
+                <span class={item.feature ? "flex opacity-40" : "flex"}>
+                  <PdIcon name={item.icon} size={20} />
+                </span>
+                <span class={["flex-1", item.feature ? "opacity-40" : ""]}>{item.label}</span>
+                <span class={item.feature ? "opacity-30" : "opacity-60"}>{item.keys}</span>
+                {item.feature && (
+                  <span class="-mr-1 flex items-center pl-1 opacity-60" title="Not built yet: upvote it" data-pd-requestable={item.feature}>
+                    <PdIcon name="upvote" size={16} />
+                  </span>
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
+  );
+}

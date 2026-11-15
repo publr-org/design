@@ -1,0 +1,118 @@
+// The sidebar: the document, the pixel-weighted total, and every reference export grouped
+// by its top-level frame. Frames are sorted by name and start collapsed; the arrow opens
+// one, the frame's name shows the frame's own render. Each frame carries the pixel-
+// weighted score of what is scored inside it; each export its own visual score.
+import { Badge } from "../../../ui/src/components/Badge/Badge.ptsx";
+import { Icon } from "../../../ui/src/components/Icon/Icon.ptsx";
+import { Text } from "../../../ui/src/components/Text/Text.ptsx";
+import { select, selectFrame, toggleFrame } from "./data";
+import { state } from "./store";
+import type { Tone } from "./store";
+
+/** A score's badge colours: good, amber, bad, or quiet while unscored. */
+export const BADGE_TONES: Record<Tone, string> = {
+  good: "bg-success/15 text-success",
+  warn: "bg-warning/15 text-warning",
+  bad: "bg-destructive/15 text-destructive",
+  none: "",
+};
+
+/** A score's text colour. */
+export const TEXT_TONES: Record<Tone, string> = {
+  good: "text-success",
+  warn: "text-warning",
+  bad: "text-destructive",
+  none: "text-muted-foreground",
+};
+
+const badgeClasses = "min-w-[52px] justify-end rounded-sm font-mono text-[11px]";
+
+/** The arrow opens the frame and goes no further than the arrow. */
+function arrow(event: MouseEvent, top: string): void {
+  event.stopPropagation();
+  toggleFrame(top);
+}
+
+export function Frames() {
+  return (
+    <aside data-frames class="flex min-h-0 w-60 shrink-0 flex-col border-r border-border bg-card">
+      <header class="border-b border-border px-3 py-2.5">
+        <Text as="h1" variant="heading-xs" classes="m-0 block">
+          PublrEngine
+        </Text>
+        <Text variant="body-xs" tone="muted" classes="block truncate">
+          <span data-doc>{state.doc}</span>
+        </Text>
+        <div class="mt-1.5 flex items-baseline gap-1.5">
+          <Text variant="heading-stat" classes={["tabular-nums", TEXT_TONES[state.totalTone]]}>
+            <span data-total>{state.total}</span>
+          </Text>
+          <Text variant="body-xs" tone="muted">
+            {state.totalNote}
+          </Text>
+        </div>
+      </header>
+      <div data-frame-list class="min-h-0 flex-1 overflow-y-auto pb-3">
+        {state.sections.map((section) => (
+          <div data-section={section.top} aria-expanded={section.open} class="border-b border-border">
+            <div
+              data-section-head
+              class={[
+                "sticky top-0 z-[1] flex cursor-pointer items-center gap-1.5 bg-card py-1.5 pr-2 pl-1.5 text-[12px] font-semibold hover:bg-ui-accent",
+                section.current ? "text-primary" : "",
+              ]}
+              title={section.name}
+              onClick={() => selectFrame(section.top)}
+            >
+              <button
+                type="button"
+                data-section-toggle
+                aria-label={section.open ? "Collapse" : "Expand"}
+                aria-expanded={section.open}
+                class="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={(event: MouseEvent) => arrow(event, section.top)}
+              >
+                <Icon name="chevron-right" size="xs" classes={section.open ? "rotate-90 transition-transform" : "transition-transform"} />
+              </button>
+              <span class="min-w-0 flex-1 truncate">{section.name}</span>
+              <Text variant="mono-xs" tone="muted" classes="font-normal">
+                {section.count}
+              </Text>
+              <Badge tone="neutral" classes={[badgeClasses, BADGE_TONES[section.tone]].join(" ")}>
+                {section.badge}
+              </Badge>
+            </div>
+            {section.open && (
+              <div data-section-body class="pb-1.5">
+                {section.groups.map((group) => (
+                  <div data-group={group.node} class="py-1 pr-3" style={{ paddingLeft: `${12 + group.indent}px` }}>
+                    <div class="flex justify-between gap-1.5 text-[11px] text-muted-foreground">
+                      <span class="truncate text-foreground">{group.name}</span>
+                      <span class="shrink-0 font-mono">{group.node}</span>
+                    </div>
+                    {group.rows.map((row) => (
+                      <div
+                        data-file={row.file}
+                        aria-selected={row.selected ? "true" : "false"}
+                        class={["-mx-1 my-px flex cursor-pointer items-center justify-between rounded-md px-2 py-0.5 text-[12px]", row.selected ? "bg-primary/25" : "hover:bg-muted"]}
+                        title={row.title}
+                        onClick={() => select(row.file)}
+                      >
+                        <span>
+                          {row.scale} <span class="font-mono text-[11px] text-muted-foreground">{row.size}</span>
+                        </span>
+                        <Badge tone="neutral" classes={[badgeClasses, BADGE_TONES[row.tone]].join(" ")}>
+                          {row.badge}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+}

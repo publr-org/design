@@ -1,0 +1,240 @@
+// A project's workspace chrome (workspace.ts holds its state):
+//
+// - TabBar: the desktop app's bar, the main menu (the mark) at its far left, (Publr Studio's: 38 px, the shown tab in the panel's
+//   colour, the others on the bar's, a hairline between them, × on the shown or hovered
+//   tab, + at the end). The design system's tab first, fixed; then the files; + opens a
+//   picker of the project's files, Drafts, the document `pe view` serves, and an import.
+// - ReferenceSelector: in the design system canvas's bottom right corner, the reference
+//   file and its page, and the picture-in-picture shown or collapsed.
+// - PipChrome: the picture-in-picture's header (the file and page, Edit, collapse) and
+//   its corners and edges, drawn over the viewer while it is the reference.
+// - ReferencePanel: the right panel while the reference has the focus: what the
+//   selection holds to sample ("6 colours → Add as tokens").
+import { Publr } from "publr-jsx";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { route } from "../app/route";
+import { MainMenu } from "../design/MainMenu.ptsx";
+import { PdIcon } from "../design/PdIcon.ptsx";
+import { Section } from "../design/Section.ptsx";
+import { shell } from "../design/store";
+import { state as viewer } from "../viewer/Viewer.ptsx";
+import { openSample } from "./sample";
+import type { SampleKind } from "./sample";
+import { refreshFiles, sys } from "./store";
+import { closeTab, editReference, fileName, importIntoProject, pipPress, setReference, setReferencePage, showFileTab, showSystemTab, togglePip, ws } from "./workspace";
+
+const picker = Publr.ref();
+
+/** The files a tab or the reference can show, grouped as the file browser groups them. */
+function FileItems({ pick, current }: { pick: (id: string) => void; current: string }) {
+  return (
+    <div class="w-[260px]" onPointerEnter={() => void refreshFiles()}>
+      {sys.files.map((f) => (
+        <DropdownMenuItem key={f.id} size="xs" onClick={() => pick(f.id)}>
+          <span class="w-4 shrink-0">{f.id === current || (current === "*" && ws.tabs.some((t) => t.id === f.id)) ? "✓" : ""}</span>
+          <span class="min-w-0 flex-1 truncate" data-pd-file-item={f.name}>
+            {f.name}
+          </span>
+          <span class="shrink-0 pl-2 opacity-60">{f.where}</span>
+        </DropdownMenuItem>
+      ))}
+    </div>
+  );
+}
+
+export function TabBar() {
+  const systemShown = () => route.tab === "system";
+  return (
+    <header data-pd-tabs class="relative flex h-[38px] shrink-0 items-stretch overflow-hidden bg-[var(--pd-tabbar)] text-[13px] select-none">
+      <span class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-[var(--pd-border)]"></span>
+      <div data-pd-tabs-menu class="flex w-11 shrink-0 items-center justify-center border-r border-[var(--pd-border)]">
+        <MainMenu />
+      </div>
+      <button
+        type="button"
+        class={["relative flex shrink-0 items-center gap-2 border-r border-[var(--pd-border)] pr-4 pl-3", systemShown() ? "z-[1] bg-[var(--pd-bg)] font-[500] text-[var(--pd-text)]" : "text-[var(--pd-text-2)] hover:bg-[var(--pd-tab-hover)]"]}
+        data-pd-tab="system"
+        title={Publr.t("The project's design system")}
+        onClick={() => showSystemTab()}
+      >
+        <PdIcon name="styles" size={20} />
+        <span class="whitespace-nowrap">{Publr.t("Design system")}</span>
+        <span class="text-[var(--pd-text-2)]">{sys.projectName}</span>
+      </button>
+      {ws.tabs.map((t) => (
+        <div
+          key={t.id}
+          class={["group relative flex w-[200px] min-w-[96px] shrink items-center border-r border-[var(--pd-border)]", route.tab === "file" && route.fileId === t.id ? "z-[1] bg-[var(--pd-bg)] font-[500] text-[var(--pd-text)]" : "text-[var(--pd-text-2)] hover:bg-[var(--pd-tab-hover)]"]}
+          data-pd-tab={t.id}
+        >
+          <button type="button" class="flex h-full min-w-0 flex-1 items-center pl-3.5 text-left" title={t.name} onClick={() => showFileTab(t.id)}>
+            <span class="truncate">{t.name}</span>
+          </button>
+          <button
+            type="button"
+            class={["mr-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] hover:bg-[var(--pd-bg-3)]", route.tab === "file" && route.fileId === t.id ? "" : "invisible group-hover:visible"]}
+            title={Publr.t("Close tab")}
+            data-pd-tab-close={t.id}
+            onClick={() => closeTab(t.id)}
+          >
+            <PdIcon name="close" size={16} />
+          </button>
+        </div>
+      ))}
+      <DropdownMenu classes="flex shrink-0">
+        <DropdownMenuTrigger classes="group flex w-9 items-center justify-center" label={Publr.t("Open a file in a tab")}>
+          <span class="flex h-6 w-6 items-center justify-center rounded-[4px] text-[var(--pd-text-2)] group-hover:bg-[var(--pd-tab-hover)]" data-pd-tab-add>
+            <PdIcon name="plus" size={20} />
+          </span>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent size="xs" align="left" classes="max-h-[480px]">
+          <div data-pd-tab-picker>
+            <div class="px-2 pt-1 pb-1 text-[11px] text-[var(--pd-text-2)]">{Publr.t("Open in a tab")}</div>
+            <FileItems pick={(id: string) => showFileTab(id)} current="*" />
+            <DropdownMenuSeparator size="xs" />
+            <DropdownMenuItem size="xs" onClick={() => (picker.current as HTMLInputElement | null)?.click()}>
+              <span class="w-4 shrink-0"></span>
+              <span class="flex-1" data-pd-tab-import>
+                {Publr.t("Import a .fig or .pubd file…")}
+              </span>
+            </DropdownMenuItem>
+          </div>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <input
+        ref={picker}
+        type="file"
+        accept=".fig,.pubd,.zip"
+        multiple
+        hidden
+        data-pd-tab-file
+        onChange={(e: Event) => {
+          const input = e.target as HTMLInputElement;
+          const files = [...(input.files ?? [])];
+          input.value = "";
+          void importIntoProject(files);
+        }}
+      />
+      {ws.importing && <span class="flex items-center px-3 text-[11px] text-[var(--pd-text-2)]">{ws.importing}</span>}
+    </header>
+  );
+}
+
+/** The reference's file and page, and the picture-in-picture shown or collapsed. */
+export function ReferenceSelector() {
+  const ready = () => !!ws.reference.file && viewer.fileId === ws.reference.file && shell.pages.length > 0;
+  return (
+    <div data-pd-reference class="absolute right-3 bottom-3 z-20 flex h-9 max-w-[min(560px,calc(100%-24px))] items-center gap-0.5 rounded-[8px] bg-[var(--pd-bg)] p-1 text-[11px] text-[var(--pd-text)] shadow-[var(--pd-toolbar-shadow)]">
+      <span class="shrink-0 px-1.5 text-[var(--pd-text-2)]">{Publr.t("Reference")}</span>
+      <DropdownMenu classes="flex min-w-0">
+        <DropdownMenuTrigger classes="flex h-7 min-w-0 items-center gap-1 rounded-[5px] px-2 hover:bg-[var(--pd-bg-2)]" label={Publr.t("Reference file")}>
+          <span class="max-w-[200px] min-w-0 truncate font-[550]" data-pd-reference-file>
+            {ws.reference.file ? fileName(ws.reference.file) : Publr.t("Choose a file")}
+          </span>
+          <PdIcon name="chevron-down" size={16} classes="shrink-0 text-[var(--pd-text-2)]" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent size="xs" align="right" classes="max-h-[420px]">
+          <FileItems pick={(id: string) => setReference(id)} current={ws.reference.file} />
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {ready() && (
+        <DropdownMenu classes="flex min-w-0">
+          <DropdownMenuTrigger classes="flex h-7 min-w-0 items-center gap-1 rounded-[5px] px-2 hover:bg-[var(--pd-bg-2)]" label={Publr.t("Reference page")}>
+            <span class="max-w-[160px] min-w-0 truncate" data-pd-reference-page>
+              {shell.pages.find((p) => p.current)?.name ?? ""}
+            </span>
+            <PdIcon name="chevron-down" size={16} classes="shrink-0 text-[var(--pd-text-2)]" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent size="xs" align="right" classes="max-h-[420px]">
+            <div class="w-[228px]">
+              {shell.pages.map((p) => (
+                <DropdownMenuItem key={p.key} size="xs" disabled={p.divider} onClick={() => setReferencePage(p.index)}>
+                  <span class="w-4">{p.current ? "✓" : ""}</span>
+                  <span class="min-w-0 flex-1 truncate">{p.name}</span>
+                </DropdownMenuItem>
+              ))}
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {ws.reference.file && (
+        <button type="button" class="flex h-7 shrink-0 items-center rounded-[5px] px-2 hover:bg-[var(--pd-bg-2)]" data-pd-pip-toggle onClick={() => togglePip()}>
+          {ws.pip.open ? Publr.t("Hide") : Publr.t("Show")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+const EDGES: { edge: "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw"; cls: string }[] = [
+  { edge: "n", cls: "top-[-3px] left-3 right-3 h-[6px] cursor-ns-resize" },
+  { edge: "s", cls: "bottom-[-3px] left-3 right-3 h-[6px] cursor-ns-resize" },
+  { edge: "w", cls: "left-[-3px] top-3 bottom-3 w-[6px] cursor-ew-resize" },
+  { edge: "e", cls: "right-[-3px] top-3 bottom-3 w-[6px] cursor-ew-resize" },
+  { edge: "nw", cls: "top-[-4px] left-[-4px] h-4 w-4 cursor-nwse-resize" },
+  { edge: "se", cls: "right-[-4px] bottom-[-4px] h-4 w-4 cursor-nwse-resize" },
+  { edge: "ne", cls: "top-[-4px] right-[-4px] h-4 w-4 cursor-nesw-resize" },
+  { edge: "sw", cls: "bottom-[-4px] left-[-4px] h-4 w-4 cursor-nesw-resize" },
+];
+
+/** The picture-in-picture's header and its corners and edges. */
+export function PipChrome() {
+  return (
+    <div data-pd-pip-chrome>
+      <div class="absolute inset-x-0 top-0 z-20 flex h-8 cursor-move items-center gap-1 border-b border-[var(--pd-border)] bg-[var(--pd-bg)] pr-1 pl-3 text-[11px] text-[var(--pd-text)]" data-pd-pip-header onPointerDown={(e: PointerEvent) => pipPress(e, "move")}>
+        <span class="min-w-0 truncate font-[550]">{viewer.docName || fileName(ws.reference.file)}</span>
+        <span class="min-w-0 flex-1 truncate text-[var(--pd-text-2)]">{shell.pages.find((p) => p.current)?.name ?? ""}</span>
+        <button type="button" class="flex h-6 shrink-0 items-center rounded-[5px] px-2 font-[550] text-[var(--pd-brand)] hover:bg-[var(--pd-bg-2)]" data-pd-pip-edit title={Publr.t("Open this file in its own tab")} onClick={() => editReference()}>
+          {Publr.t("Edit")}
+        </button>
+        <button type="button" class="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]" data-pd-pip-collapse title={Publr.t("Collapse to the corner")} onClick={() => togglePip(false)}>
+          <PdIcon name="chevron-down" size={20} />
+        </button>
+      </div>
+      {EDGES.map((x) => (
+        <span key={x.edge} class={["absolute z-30", x.cls]} data-pd-pip-edge={x.edge} onPointerDown={(e: PointerEvent) => pipPress(e, x.edge)}></span>
+      ))}
+    </div>
+  );
+}
+
+/** The right panel while the reference has the focus. */
+export function ReferencePanel() {
+  return (
+    <aside data-pd-right data-pd-reference-right class="flex h-full w-[241px] shrink-0 flex-col border-l border-[var(--pd-border)] bg-[var(--pd-bg)] text-[11px] text-[var(--pd-text)]">
+      <div class="flex h-[46px] shrink-0 items-center border-b border-[var(--pd-border)] px-4">
+        <span class="min-w-0 flex-1 truncate font-[550]">{Publr.t("Reference")}</span>
+      </div>
+      <div data-pd-scroll class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        <Section title={viewer.docName || fileName(ws.reference.file)}>
+          <span class="text-[var(--pd-text-2)]">{shell.pages.find((p) => p.current)?.name ?? ""}</span>
+          <button type="button" class="h-6 rounded-[5px] bg-[var(--pd-bg-2)] px-2 text-left hover:outline hover:outline-1 hover:outline-[var(--pd-border)]" onClick={() => editReference()}>
+            {Publr.t("Edit in its tab")}
+          </button>
+        </Section>
+        {sys.found.count > 0 ? (
+          <Section title={`${sys.found.count} ${sys.found.count === 1 ? Publr.t("layer selected") : Publr.t("layers selected")}`}>
+            {sys.found.rows.map((r) => (
+              <div key={r.kind} class="flex min-h-7 items-center gap-2" data-pd-found={r.kind}>
+                <span class="min-w-0 flex-1">
+                  <span class="block">{r.detail}</span>
+                  {r.fresh < r.found && <span class="block text-[var(--pd-text-2)]">{`${r.found - r.fresh} ${Publr.t("in the system already")}`}</span>}
+                </span>
+                <button type="button" class="h-6 shrink-0 rounded-[5px] bg-[var(--pd-brand)] px-2 font-[550] text-white disabled:opacity-40" disabled={r.fresh === 0} data-pd-found-add={r.kind} onClick={() => openSample(r.kind as SampleKind)}>
+                  {r.label}
+                </button>
+              </div>
+            ))}
+            {sys.found.rows.length === 0 && <span class="text-[var(--pd-text-2)]">{Publr.t("Nothing here to add to the system.")}</span>}
+          </Section>
+        ) : (
+          <div class="px-4 py-3 leading-4 text-[var(--pd-text-2)]">{Publr.t("Select layers in the reference to sample them: their colours, text styles, radii, spacing and shadows. Or drag one onto a section of the design system.")}</div>
+        )}
+      </div>
+    </aside>
+  );
+}

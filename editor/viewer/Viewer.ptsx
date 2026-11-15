@@ -1,0 +1,1219 @@
+// The viewer's chrome around the canvas: the way home and the file's place and name
+// (renamed in place) on the left of the top bar, the page switcher and the zoom controls
+// on the right; the numbers of the renderer in a small HUD (the GPU's frame, draw calls
+// and CPU fallbacks, or the CPU tiles'); what a click picked; a
+// status while loading; the drop frame while files are held over the canvas. The canvas
+// itself is imperative (stage.ts) and lives in a host element that carries no binding,
+// so a redraw of the chrome never touches it. The chrome renders store values only; the
+// stage reports into the store.
+//
+// The viewer stays mounted while the file browser shows (hidden): the render workers
+// start with the first file opened and stay, each file closing out of them when the
+// browser comes back.
+//
+// Several files stay open at once (a workspace's tabs): each in an engine of its own on
+// this thread, with its page, camera, selection and undo history. Showing another is a
+// switch, not an open: the one shown is saved, the render workers take the other's
+// document (they hold one at a time: a file's `document.json`, its pages read as asked)
+// and the canvas draws it. One memory budget covers the files kept open and the pages each
+// keeps read (keep.ts): past it, what was shown longest ago goes first, a page of a file
+// or a whole file (parked: saved and let go, its view kept; it opens from its file again
+// when shown).
+import { Publr } from "publr-jsx";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { DropOverlay } from "../../../ui/src/components/DropOverlay/DropOverlay.ptsx";
+import { Icon } from "../../../ui/src/components/Icon/Icon.ptsx";
+import { InlineInput } from "../../../ui/src/components/InlineInput/InlineInput.ptsx";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../ui/src/components/Select/Select.ptsx";
+import { Text } from "../../../ui/src/components/Text/Text.ptsx";
+import { ToolbarButton } from "../../../ui/src/components/Toolbar/ToolbarButton.ptsx";
+import { importAndShow, navigate, route } from "../app/route";
+import { addGoogleFamily, addLocalFonts, canUseLocalFonts, fontBytes, fontsChannel } from "../home/fonts";
+import { createServedEdits, getMeta, listProjects, readPath, SERVED_ID, saveServed, servedEdits, servedMeta, unpack, updateMeta } from "../home/store";
+import { installChecks } from "./checks";
+import { Editing, installEditing } from "./edit";
+import { FontRole } from "./engine";
+import type { DocFont, DocInfo, Engine, Hit } from "./engine";
+import { GpuCanvas } from "./gpu";
+import { closeInWorkers, fetchServerDoc, openInEngine, openInWorkers, servedDoc, startMainEngine, startWorkers, takeEarlyEngine, takeEarlyWorkers, workerHelpers } from "./loader";
+import type { Helpers } from "./feed";
+import type { Source } from "./loader";
+import type { Pool } from "./pool";
+import { assetChecks, feedOf, setFeed } from "./feed";
+import { keep } from "./keep";
+import { begin, bytes, cancel, fail, finish, opening, step } from "./progress";
+import { Stage } from "./stage";
+import type { KeptView, View } from "./stage";
+
+export type ViewerProps = {
+  /** Render workers (default: the cores less one, at most three; each holds the
+   * document and its decoded images). */
+  workers?: number;
+  /** The tile cache's cap, in MiB. */
+  cacheMiB?: number;
+  /** Draw on the GPU (default: when the browser has WebGPU); CPU tiles otherwise. */
+  gpu?: boolean;
+  /** Its own top bar, numbers and selection note (default); false inside an editor
+   * shell that draws its own around the canvas. */
+  chrome?: boolean;
+};
+
+export const state = Publr.reactive({
+  /** The open file's id ("" while none). */
+  fileId: "",
+  docName: "",
+  /** Where the file is: "Drafts", a project's name, or the server. */
+  location: "",
+  /** The name cannot change (the document `pe view` serves). */
+  readOnly: false,
+  /** Edits are saved (in a file of the browser; for the served document, in the file
+   * made for its edits). False: they live only while the file is open. */
+  editsKept: true,
+  pages: [] as { value: string; label: string }[],
+  page: "0",
+  zoom: "100%",
+  level: "",
+  pending: 0,
+  tiles: "",
+  lastMs: "",
+  fps: "",
+  wasm: "",
+  /** "GPU" or "CPU": what draws the canvas. */
+  renderer: "",
+  gpuFrame: "",
+  gpuDraws: "",
+  gpuFallbacks: "",
+  selection: "",
+  selectionDetail: "",
+  status: "",
+  dropping: false,
+  /** The families the open file asks for that no font here has (drawn from the file's
+   * stored text, or the fallback fonts), with their styles. */
+  missingFonts: [] as { family: string; styles: string }[],
+  missingLabel: "",
+  /** This browser can read the computer's installed fonts. */
+  localFonts: false,
+  /** The open file was imported by an earlier build and should be imported again: its
+   * texts lack Figma's stored layout, or some of its images are damaged. */
+  reimport: false,
+});
+
+// A damaged image read on this thread (the GPU canvas's engine) asks for a new import.
+assetChecks.onBroken = () => (state.reimport = true);
+
+export const host = Publr.ref();
+/** The canvas WebGPU draws into, under the stage's 2D canvas. */
+export const gpuHost = Publr.ref();
+
+let stage: Stage | null = null;
+/** Changes to the open document: undo, redo, the workers' replay, saving. */
+let editing: Editing | null = null;
+let options: ViewerProps = {};
+let pool: Promise<Pool> | null = null;
+/** The GPU canvas, once started (null: none). */
+let gpuReady: Promise<GpuCanvas | null> | null = null;
+/** The first engine on this thread (the GPU canvas takes its shaders from it), until the
+ * first file opened takes it. */
+let firstEngine: Promise<Engine> | null = null;
+/** Bumped by every open and close: an open overtaken by another stops where it is. */
+let ticket = 0;
+
+const mib = (bytes: number) => `${Math.round(bytes / 1048576)} MB`;
+
+let rememberTimer = 0;
+
+/** The shown file's view goes to the workspace's memory a moment after it changes. */
+function rememberSoon(): void {
+  if (rememberTimer || !shown) return;
+  rememberTimer = window.setTimeout(() => {
+    rememberTimer = 0;
+    if (shown && stage?.doc) viewMemory.put(shown.id, stage.keepView());
+  }, 500);
+}
+
+function showView(v: View): void {
+  rememberSoon();
+  state.zoom = `${Math.round(v.zoom * 1000) / 10}%`;
+  state.level = `L${v.level}`;
+  state.pending = v.pending;
+  state.tiles = `${v.tiles} tiles · ${mib(v.cacheBytes)}`;
+  state.lastMs = `${Math.round(v.lastMs)} ms`;
+  state.fps = v.fps ? `${Math.round(v.fps)} fps · ${v.drawMs.toFixed(1)} ms` : "";
+  const total = v.wasmBytes.reduce((a, b) => a + b, 0);
+  state.wasm = `wasm ${mib(total)} (${v.wasmBytes.map((b) => Math.round(b / 1048576)).join(" / ")})`;
+  const g = v.gpu;
+  state.renderer = g ? "GPU" : "CPU";
+  if (g) {
+    state.pending = g.pending;
+    state.gpuFrame = `scene ${g.sceneMs.toFixed(1)} · encode ${g.encodeMs.toFixed(1)} · gpu ${g.gpuMs.toFixed(1)} ms`;
+    state.gpuDraws = `${g.drawCalls} draws · ${g.prims} prims · ${g.pathEntries} paths · ${g.glyphs} glyphs (+${g.glyphsNew})`;
+    state.gpuFallbacks = `${g.surfacesDrawn}/${g.surfaces} surfaces · ${g.passes} passes · ${g.fallbacks} fallbacks · tex ${mib(g.textureBytes)} (kept ${mib(g.keptBytes)})`;
+  }
+}
+
+/** The GPU canvas, started once when the browser has WebGPU and it is wanted. */
+function startGpu(): Promise<GpuCanvas | null> {
+  if (!gpuReady) {
+    const canvas = gpuHost.current as HTMLCanvasElement | null;
+    const wanted = options.gpu ?? true;
+    const has = typeof navigator !== "undefined" && "gpu" in navigator;
+    gpuReady =
+      !canvas || !wanted || !has
+        ? Promise.resolve(null)
+        : spareEngine()
+            .then(async (engine) => {
+              const gpu = await GpuCanvas.create(canvas, engine);
+              if (!gpu) return null;
+              stage?.attachGpu(gpu, engine);
+              console.info("canvas: drawn on the GPU");
+              return gpu;
+            })
+            .catch((err) => {
+              console.error("gpu", err);
+              return null;
+            });
+  }
+  return gpuReady;
+}
+
+/** The first engine, started once (the GPU canvas's shaders come from it). */
+function spareEngine(): Promise<Engine> {
+  firstEngine ??= takeEarlyEngine() ?? startMainEngine();
+  return firstEngine;
+}
+
+/** An engine on this thread for a file to open in: the first one while no file has it,
+ * then a new one each (an instance of its own: its memory goes when the file closes). */
+function claimEngine(): Promise<Engine> {
+  firstEngine ??= takeEarlyEngine();
+  const first = firstEngine;
+  if (first && !firstClaimed) {
+    firstClaimed = true;
+    return first;
+  }
+  return startMainEngine();
+}
+let firstClaimed = false;
+
+// ------------------------------------------------------------ files kept open
+
+/** A file open in an engine of its own, kept while another shows. */
+type Resident = {
+  /** The route's id for it (SERVED_ID for the document `pe view` serves). */
+  id: string;
+  engine: Engine;
+  /** Where the render workers read it. */
+  source: Source;
+  /** The file of the browser its edits save to ("" none yet). */
+  saveId: string;
+  /** The served document's name ("" for a file of the browser). */
+  served: string;
+  doc: DocInfo;
+  name: string;
+  location: string;
+  readOnly: boolean;
+  reimport: boolean;
+  missingFonts: { family: string; styles: string }[];
+  missingLabel: string;
+  /** Its view while another shows (null: the one shown). */
+  view: KeptView | null;
+  /** When it was last shown. */
+  used: number;
+};
+
+/** The files open now, by id. */
+const residents = new Map<string, Resident>();
+/** The one shown (null: none). */
+let shown: Resident | null = null;
+/** The view of each file let go (parked or closed), kept for when it opens again. */
+const parkedViews = new Map<string, KeptView>();
+
+
+/** A workspace's way to keep views across visits: the view of file `id` when it opens
+ * again, and each view as it changes (null: none kept). */
+export const viewMemory: { get: (id: string) => KeptView | null; put: (id: string, view: KeptView) => void; keep: () => string[] } = {
+  get: () => null,
+  put: () => {},
+  keep: () => [],
+};
+
+/** Which resident's document the render workers hold (null: none or changing). */
+let held: Resident | null = null;
+let holding: Promise<void> = Promise.resolve();
+const holdWaiters = new Map<Resident, (() => void)[]>();
+
+/** The render workers take `source`, the document of `r` (null: of none kept), one
+ * document after another in the order asked: its pages as the first worker read them
+ * (null: they held it already). */
+function hold(p: Pool, r: Resident | null, source: Source): Promise<{ doc: DocInfo; ms: number[] } | null> {
+  const run = holding.then(async () => {
+    if (r && held === r) return null;
+    held = null;
+    const out = await openInWorkers(p, source);
+    held = r;
+    if (r) {
+      for (const go of holdWaiters.get(r) ?? []) go();
+      holdWaiters.delete(r);
+    }
+    return out;
+  });
+  holding = run.then(
+    () => {},
+    (err) => console.error("workers", err),
+  );
+  return run;
+}
+
+function whenHeld(r: Resident): Promise<void> {
+  if (held === r) return Promise.resolve();
+  return new Promise((go) => holdWaiters.set(r, [...(holdWaiters.get(r) ?? []), go]));
+}
+
+/** The workers' help for `r`'s feed: what reads its files waits while the workers hold
+ * another document. */
+function helpersFor(h: Helpers, r: Resident): Helpers {
+  return {
+    ...h,
+    decode: async (hash, level) => {
+      await whenHeld(r);
+      return h.decode(hash, level);
+    },
+    page: async (src, parts) => {
+      await whenHeld(r);
+      return h.page(src, parts);
+    },
+  };
+}
+
+/** The engine memory each open file holds, bytes (for the console and tests). */
+export function residentBytes(): { id: string; name: string; bytes: number; used: number; shown: boolean }[] {
+  return [...residents.values()].map((r) => ({ id: r.id, name: r.name, bytes: r.engine.memory.buffer.byteLength, used: r.used, shown: r === shown }));
+}
+
+/** The most an engine may hold (WASM32, the engine's `max_memory`): past it a page read
+ * or an edit fails. Each engine (this thread's, each worker's) has its own. */
+export const ENGINE_LIMIT = 4 * 1024 * 1048576;
+
+export type MemoryUse = {
+  /** The share of `ENGINE_LIMIT` the fullest engine of the shown file holds (0..1): how
+   * near the file is to a wall. */
+  share: number;
+  /** What is needed now: the shown file's document and decoded images, the shown page
+   * (its nodes and its records on the GPU), the canvas's textures and tiles, and what the
+   * workers drawing in the background hold. The share is of this. */
+  active: number;
+  /** Of `active`: decoded images, the GPU, the workers. */
+  images: number;
+  gpu: number;
+  workers: number;
+  /** Kept so they show at once, let go when room is needed: the other pages read (their
+   * nodes and records) and the other open files. */
+  warm: number;
+  /** Memory the engines grew into and now reuse: WASM memory never goes back to the
+   * browser, so what was let go stays reserved, free for what comes next. */
+  reserved: number;
+  /** Everything taken from the browser: the three above. */
+  total: number;
+  /** Past this the warm pages and files are let go (keep.ts): a target, not a wall. */
+  budget: number;
+  /** The shown page's nodes in its engine (0: not known, the whole file came at once). */
+  page: number;
+  /** Each page of the shown file in memory: its nodes and its records on the GPU. */
+  pageBytes: { page: number; bytes: number }[];
+};
+
+/** What the View > Memory usage panel and Manage memory show, measured: the engines'
+ * live bytes and sizes, the workers' (asked), the GPU's textures and records. */
+export async function memoryUse(): Promise<MemoryUse> {
+  const s = stage;
+  const none = { share: 0, active: 0, images: 0, gpu: 0, workers: 0, warm: 0, reserved: 0, total: 0, budget: keep.budget, page: 0, pageBytes: [] };
+  if (!shown || !s) return none;
+  const e = shown.engine;
+  const size = e.memory.buffer.byteLength;
+  const live = e.live();
+  let images = 0;
+  try {
+    images = e.stats().image_bytes;
+  } catch {
+    // A closed engine: no images.
+  }
+  const kept = feedOf(e)?.kept() ?? [];
+  const page = kept.find((k) => k.page === s.page)?.live ?? 0;
+  const warmPages = kept.filter((k) => k.page !== s.page).reduce((a, k) => a + k.live, 0);
+  let shownRecords = 0;
+  let warmRecords = 0;
+  const recordsOf = new Map<number, number>();
+  for (const r of s.recordsBytes()) {
+    if (r.engine === e) recordsOf.set(r.page, (recordsOf.get(r.page) ?? 0) + r.bytes);
+    if (r.engine === e && r.page === s.page) shownRecords += r.bytes;
+    else warmRecords += r.bytes;
+  }
+  const pageBytes = kept.map((k) => ({ page: k.page, bytes: k.live + (recordsOf.get(k.page) ?? 0) }));
+  const canvas = (s.usingGpu() ? (s.gpu?.stats.textureBytes ?? 0) : 0) + s.bytes;
+  const others = [...residents.values()].filter((r) => r !== shown).reduce((a, r) => a + r.engine.memory.buffer.byteLength, 0);
+  // The workers keep engines of their own (CPU layers, exports): asked, not guessed.
+  const pool = s.pool;
+  const stats = pool ? await Promise.all(pool.slots.map((slot) => pool.call(slot, { type: "stats" }).catch(() => null))) : [];
+  let workers = 0;
+  let workersReserved = 0;
+  let fullest = live;
+  for (const st of stats) {
+    if (!st) continue;
+    workers += st.live as number;
+    fullest = Math.max(fullest, st.live as number);
+    workersReserved += (st.memory as number) - (st.live as number);
+  }
+  const gpu = shownRecords + canvas;
+  const active = live - warmPages + gpu + workers;
+  const warm = warmPages + warmRecords + others;
+  const reserved = size - live + workersReserved;
+  return { share: Math.min(1, fullest / ENGINE_LIMIT), active, images, gpu, workers, warm, reserved, total: active + warm + reserved, budget: keep.budget, page, pageBytes };
+}
+
+/** Lets go of `r`: its engine and everything in it (its edits were saved when it was
+ * last left); its view is kept. */
+function release(r: Resident): void {
+  residents.delete(r.id);
+  if (r.view) {
+    parkedViews.set(r.id, r.view);
+    viewMemory.put(r.id, r.view);
+  }
+  if (held === r) held = null;
+  holdWaiters.delete(r);
+  stage?.dropEngine(r.engine);
+  setFeed(r.engine, null);
+  keep.forget(r.engine);
+  try {
+    r.engine.close();
+  } catch (err) {
+    console.error("close", err);
+  }
+}
+
+/** Unsaved changes would be lost by letting go of `r` (a document with nowhere to save). */
+function unsaved(r: Resident): boolean {
+  try {
+    return !r.saveId && !r.served && r.engine.dirtyPages().length > 0;
+  } catch {
+    return true;
+  }
+}
+
+/** Files whose tab closed while they showed: let go once another shows. */
+const forgetting = new Set<string>();
+
+/** Lets go of what was shown longest ago while what is kept holds more than the budget:
+ * files closed while they showed, then pages and files (keep.ts). */
+function park(): void {
+  for (const id of [...forgetting]) {
+    const r = residents.get(id);
+    if (r === shown) continue;
+    forgetting.delete(id);
+    if (r && !unsaved(r)) release(r);
+    parkedViews.delete(id);
+  }
+  keep.fit(null);
+}
+
+/** Tells the budget of what is kept (keep.ts) which files may be parked: every one but
+ * the one shown, those `keep` of the workspace names and those with nowhere to save. */
+function keepFiles(): void {
+  keep.add(() => {
+    const pinned = new Set(viewMemory.keep());
+    return [...residents.values()]
+      .filter((r) => r !== shown && !pinned.has(r.id) && !unsaved(r))
+      .map((r) => ({
+        id: `file ${r.id}`,
+        used: r.used,
+        engine: r.engine,
+        live: 0,
+        gpu: stage?.recordsBytes().filter((x) => x.engine === r.engine).reduce((a, x) => a + x.bytes, 0) ?? 0,
+        file: true,
+        drop: () => {
+          console.info(`tabs: parked ${r.name} (${Math.round(r.engine.memory.buffer.byteLength / 1048576)} MB)`);
+          release(r);
+          return true;
+        },
+      }));
+  }, "files");
+}
+
+/** Closes file `id` if it is open and not shown (a tab closed). */
+export function forgetFile(id: string): void {
+  const r = residents.get(id);
+  if (!r) return;
+  if (r === shown) forgetting.add(id);
+  else if (!unsaved(r)) {
+    release(r);
+    parkedViews.delete(id);
+  }
+}
+
+/** The edits to the served document `r` go to a file of the browser made on its first
+ * save (the server keeps the document as it is; what is not written here is read from
+ * it). */
+function adoptServed(r: Resident): () => Promise<string> {
+  return async () => {
+    const base = r.source.kind === "url" ? r.source.base : "/doc/";
+    const meta = await createServedEdits(r.served, base);
+    r.saveId = meta.id;
+    r.source = { kind: "file", name: r.name, id: meta.id };
+    r.location = servedLocation(true);
+    if (shown === r) state.location = r.location;
+    console.info(`tabs: edits to ${r.served} are kept in this browser (${meta.id})`);
+    return meta.id;
+  };
+}
+
+/** Whether `r`'s edits are saved (a served `.fig` comes whole: they live while it is open). */
+const keepsEdits = (r: Resident) => !!r.saveId || (!!r.served && r.source.kind !== "fig");
+
+const servedLocation = (edited: boolean) => (edited ? Publr.t("Served by pe view · edits kept in this browser") : Publr.t("Served by pe view"));
+
+/** Shows which families the open file lacks (asked of a render worker). */
+export async function refreshFonts(p: Pool, mine: number): Promise<DocFont[]> {
+  const r = await p.call(p.slots[0], { type: "fonts" });
+  if (mine !== ticket) return [];
+  const fonts = r.fonts as DocFont[];
+  const missing = fonts.filter((f) => f.missing);
+  state.missingFonts = missing.map((f) => ({ family: f.family, styles: f.styles.join(", ") }));
+  state.missingLabel = missing.length === 1 ? Publr.t("1 missing font") : `${missing.length} ${Publr.t("missing fonts")}`;
+  state.localFonts = canUseLocalFonts();
+  if (shown) {
+    shown.missingFonts = state.missingFonts;
+    shown.missingLabel = state.missingLabel;
+  }
+  return missing;
+}
+
+/** Families the file lacks that Google Fonts has: fetched from its repository and kept
+ * as shared fonts (they reach the engines through the fonts channel). */
+export async function fetchGoogleFonts(missing: DocFont[]): Promise<void> {
+  for (const f of missing) {
+    const r = await addGoogleFamily(f.family).catch((err) => {
+      console.warn("google fonts", f.family, err);
+      return null;
+    });
+    if (r?.added.length) console.info(`fonts: ${f.family} from Google Fonts (${r.added.length} files)`);
+  }
+}
+
+/** Shared fonts added while a file is open: every engine takes them and the canvas
+ * draws again. (Removed ones go when the file is opened again.) */
+export async function fontsAdded(ids: string[]): Promise<void> {
+  const p = pool ? await pool : null;
+  const g = gpuReady ? await gpuReady : null;
+  for (const id of ids) {
+    const f = await fontBytes(id);
+    if (!f) continue;
+    if (p) await Promise.all(p.slots.map((slot) => p.call(slot, { type: "font", role: FontRole.face, bytes: f.bytes, family: f.family, style: f.style })));
+    for (const r of residents.values()) r.engine.addFontNamed(FontRole.face, f.bytes, f.family, f.style);
+  }
+  for (const r of residents.values()) r.engine.gpuForget();
+  g?.clear();
+  stage?.clearTiles();
+  stage?.requestDraw();
+  if (p && state.fileId) await refreshFonts(p, ticket);
+}
+
+Publr.effect(() => {
+  if (typeof BroadcastChannel === "undefined") return;
+  const ch = fontsChannel();
+  ch.onmessage = (event: MessageEvent) => {
+    const m = event.data as { type: string; ids: string[] };
+    if (m.type === "added") void fontsAdded(m.ids).catch((err) => console.error("fonts", err));
+  };
+  return () => ch.close();
+});
+
+/** Reads the families the file lacks from this computer's installed fonts (the browser
+ * asks for permission; this runs from the click). */
+export async function useLocalFonts(): Promise<void> {
+  const families = state.missingFonts.map((f) => f.family);
+  try {
+    const r = await addLocalFonts(families);
+    state.status = r.added.length ? "" : Publr.t("None of the missing fonts is installed on this computer.");
+    if (!r.added.length) setTimeout(() => (state.status = ""), 4000);
+  } catch (err) {
+    console.error("local fonts", err);
+  }
+}
+
+export function uploadFonts(): void {
+  navigate("/fonts");
+}
+
+function showSelection(hit: Hit | null): void {
+  state.selection = hit ? hit.name || hit.id : "";
+  state.selectionDetail = hit ? `${hit.type} ${hit.id}${hit.top !== hit.id ? ` · in ${hit.top_name}` : ""}` : "";
+}
+
+/** The render workers, started on first use. */
+function workers(): Promise<Pool> {
+  if (!pool) {
+    const count = options.workers ?? Math.min(3, Math.max(1, (navigator.hardwareConcurrency || 4) - 1));
+    const t0 = performance.now();
+    // Started as the page loaded (`prestart`), or now.
+    pool = (takeEarlyWorkers(count) ?? startWorkers(count, (_text, fraction) => step("engine", 0.8 * fraction))).then((p) => {
+      step("engine", 0.8);
+      console.info(`engine: ${count} workers ready in ${Math.round(performance.now() - t0)} ms`);
+      // Workers tell of damaged images as notes.
+      p.onNote = (note) => {
+        if (note.startsWith("broken-asset")) state.reimport = true;
+      };
+      return p;
+    });
+    pool.catch(() => (pool = null));
+  }
+  return pool;
+}
+
+/** The served document's card picture, drawn once it shows and kept in OPFS. */
+async function servedThumbnail(p: Pool, name: string, mine: number): Promise<void> {
+  const meta = await servedMeta(name);
+  if (meta.thumbnail || mine !== ticket) return;
+  const r = await p.call(p.slots[0], { type: "thumbnail" });
+  if (mine !== ticket) return;
+  const png = r.png as Uint8Array | null;
+  await saveServed({ ...meta, thumbnail: !!png }, png ?? undefined);
+}
+
+/** Leaves the file shown: saved, and its view kept (it stays open). */
+async function leave(): Promise<void> {
+  const r = shown;
+  if (!r || !stage) return;
+  await editing?.save();
+  r.view = stage.keepView();
+  r.saveId = editing?.fileId || r.saveId;
+  viewMemory.put(r.id, r.view);
+}
+
+/** Puts the state the chrome shows for `r`. */
+function showState(r: Resident): void {
+  state.fileId = r.id;
+  state.docName = r.name;
+  state.location = r.location;
+  state.readOnly = r.readOnly;
+  state.editsKept = keepsEdits(r);
+  state.reimport = r.reimport;
+  state.missingFonts = r.missingFonts;
+  state.missingLabel = r.missingLabel;
+  state.status = "";
+  state.pages = r.doc.pages.map((pg, i) => ({ value: String(i), label: pg.name || `Page ${i + 1}` }));
+  document.title = `${r.name} · PublrDesign`;
+}
+
+/** Makes `r` the file every edit goes to: the editing engine, its saving. */
+function attachEditing(r: Resident, p: Pool): void {
+  editing?.detach();
+  editing?.attach(r.engine, p, r.saveId);
+  if (editing) editing.adopt = r.served && !r.saveId && r.source.kind !== "fig" ? adoptServed(r) : null;
+}
+
+/** Shows `r`, open already, as it was left. */
+async function showResident(r: Resident, mine: number): Promise<void> {
+  const s = stage;
+  if (!s) return;
+  const t0 = performance.now();
+  const p = await workers();
+  // The workers take its document first: the canvas asks them for parts of it.
+  try {
+    await hold(p, r, r.source);
+  } catch (err) {
+    console.error(err);
+    return;
+  }
+  if (mine !== ticket) return;
+  const g = await startGpu();
+  if (opening()) cancel();
+  s.onDrawn = null;
+  s.pool = p;
+  shown = r;
+  r.used = Date.now();
+  // The GPU canvas keeps each open file's caches (glyph atlas, kept surfaces, records):
+  // switching back draws at once (`GpuCanvas.useEngine`, `Stage.engine`).
+  if (g) g.pool = p;
+  s.engine = r.engine;
+  attachEditing(r, p);
+  const view = r.view ?? parkedViews.get(r.id) ?? null;
+  r.view = null;
+  if (view) s.showKept(r.doc, view);
+  else s.open(r.doc);
+  // The page first: what follows the file shown reads it with the file.
+  state.page = String(s.page);
+  showState(r);
+  const ms = performance.now() - t0;
+  lastSwitch = { id: r.id, ms, whole: 0 };
+  s.onDrawn = (pending) => {
+    if (pending !== 0 || shown !== r) return;
+    s.onDrawn = null;
+    if (lastSwitch.id === r.id) lastSwitch.whole = performance.now() - t0;
+  };
+  s.requestDraw();
+  console.info(`tabs: ${r.name} shown in ${Math.round(ms)} ms`);
+}
+
+/** The last switch between open files: ms until it showed, and until its frame was
+ * whole (0 while not yet). */
+let lastSwitch = { id: "", ms: 0, whole: 0 };
+
+/** Opens file `id` (a file of the browser, or `served`) and shows it: as it was left
+ * when it is open already, else from its file (a view kept of it put back). */
+async function openFile(id: string): Promise<void> {
+  const mine = ++ticket;
+  const s = stage;
+  if (!s) return;
+  // The file shown until now is written first and stays open.
+  await leave();
+  if (mine !== ticket) return;
+  forgetting.delete(id);
+  const open = residents.get(id);
+  if (open) {
+    await showResident(open, mine);
+    park();
+    return;
+  }
+  shown = null;
+  state.fileId = id;
+  state.docName = "";
+  state.location = "";
+  state.pages = [];
+  state.page = "0";
+  state.status = "";
+  state.reimport = false;
+  state.missingFonts = [];
+  begin();
+  s.onDrawn = null;
+  let engine: Engine | null = null;
+  try {
+    let source: Source;
+    let name: string;
+    let fromFig = false;
+    let served = "";
+    let saveId = "";
+    let readOnly = false;
+    let location = "";
+    if (id === SERVED_ID) {
+      const info = await servedDoc();
+      if (!info) throw new Error("pe view serves no document");
+      name = info.name;
+      served = name;
+      readOnly = true;
+      const meta = await servedMeta(name);
+      await saveServed({ ...meta, opened: Date.now() });
+      state.docName = name;
+      // Edits made to it before are kept in a file of the browser: it opens from there.
+      const edits = info.kind === "pubd" ? await servedEdits(name) : null;
+      location = servedLocation(!!edits);
+      if (edits) {
+        saveId = edits.id;
+        source = { kind: "file", name, id: edits.id };
+      } else {
+        // A .fig comes whole: its bytes are the document; its pages and images are in it.
+        source = await fetchServerDoc(info, (read, total) => bytes("document", 0.7 * read, total));
+        if (info.kind === "fig") {
+          step("page", 1);
+          step("images", 1);
+        }
+      }
+    } else {
+      const meta = await getMeta(id);
+      if (!meta || meta.trashed) throw new Error(meta ? "this file is in Trash" : "there is no such file");
+      name = meta.name;
+      const project = meta.project ? (await listProjects()).find((p) => p.id === meta.project) : null;
+      location = project ? project.name : Publr.t("Drafts");
+      state.docName = name;
+      await updateMeta(id, { opened: Date.now() });
+      source = { kind: "file", name, id };
+      saveId = id;
+      fromFig = meta.source === "fig";
+    }
+    state.location = location;
+    state.readOnly = readOnly;
+    document.title = `${name} · PublrDesign`;
+    const p = await workers();
+    if (mine !== ticket) return;
+    const t0 = performance.now();
+    s.pool = p;
+    const g = await startGpu();
+    engine = await claimEngine().catch(() => null);
+    const main = engine;
+    step("engine", 1);
+    if (mine !== ticket) {
+      main?.close();
+      return;
+    }
+    const r: Resident | null = main ? { id, engine: main, source, saveId, served, doc: { name, pages: [] }, name, location, readOnly, reimport: false, missingFonts: [], missingLabel: "", view: null, used: Date.now() } : null;
+    const [answer] = await Promise.all([hold(p, r, source), main ? openInEngine(main, source, (read, total) => bytes("document", 0.7 * read, total)) : Promise.resolve()]);
+    if (!answer) throw new Error("the document did not open");
+    const { doc, ms } = answer;
+    if (mine !== ticket) {
+      main?.close();
+      return;
+    }
+    // A new file gets caches of its own on the GPU canvas (`s.engine` below); those of
+    // the files kept open stay.
+    if (g) g.pool = p;
+    // Images are decoded and page files read by the workers: this thread only takes
+    // them in, a few a frame.
+    if (main && r) {
+      r.doc = doc;
+      state.editsKept = keepsEdits(r);
+      feedOf(main)?.useHelpers(helpersFor(workerHelpers(p), r));
+      residents.set(id, r);
+      keep.engine(main);
+      shown = r;
+      attachEditing(r, p);
+    }
+    s.engine = main;
+    console.info(`document ${name}: open in ${Math.round(performance.now() - t0)} ms (engine ${ms.map((m) => Math.round(m)).join("/")} ms)`);
+    state.pages = doc.pages.map((pg, i) => ({ value: String(i), label: pg.name || `Page ${i + 1}` }));
+    step("document", 1);
+    // The first page's nodes and the images in view, as the main engine reads them (on
+    // CPU tiles the workers read them: the first whole frame counts for both).
+    const feed = g && main ? feedOf(main) : undefined;
+    if (feed) feed.onProgress = (what, fraction) => mine === ticket && step(what, fraction);
+    else {
+      step("page", 1);
+      step("images", 1);
+    }
+    followFirstFrame(s, mine);
+    // A `.fig` import made before texts kept Figma's own layout of them.
+    if (fromFig && main && feedOf(main)?.storedText === false) {
+      state.reimport = true;
+      if (r) r.reimport = true;
+    }
+    // The link the address had when it was opened (the shell's selection rewrites the
+    // address as the file opens); taken once.
+    const link = route.link || null;
+    route.link = "";
+    // A view kept of it (the last visit, a parked tab) comes back; else its first page.
+    const kept = parkedViews.get(id) ?? viewMemory.get(id);
+    parkedViews.delete(id);
+    if (kept && kept.page < doc.pages.length) s.showKept(doc, kept);
+    // A link to a page or a frame opens on its page: no other page is read first.
+    else s.open(doc, linkedPage(doc, link));
+    state.page = String(s.page);
+    // After the shell has laid the canvas out (its size decides the fit).
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (mine !== ticket) return;
+        showLinkedNode(s, link);
+      }),
+    );
+    if (id === SERVED_ID) void servedThumbnail(p, name, mine).catch((err) => console.error("thumbnail", err));
+    void refreshFonts(p, mine)
+      .then((missing) => fetchGoogleFonts(missing))
+      .catch((err) => console.error("fonts", err));
+    park();
+  } catch (err) {
+    if (mine !== ticket) return;
+    if (engine && ![...residents.values()].some((r) => r.engine === engine)) engine.close();
+    console.error(err);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** How long the splash waits for the first page to be whole and sharp once something of
+ * it is drawn, ms: past it the rest sharpens in view. */
+const SHARP_WAIT_MS = 3000;
+
+/** The splash goes when the first page's frame has everything it draws, or a while
+ * after its nodes are drawn when some of it (an image, a CPU layer) is slow to come. */
+function followFirstFrame(s: Stage, mine: number): void {
+  let timer = 0;
+  s.onDrawn = (pending) => {
+    if (mine !== ticket || !opening()) {
+      s.onDrawn = null;
+      window.clearTimeout(timer);
+      return;
+    }
+    step("frame", 1);
+    if (pending === 0) {
+      s.onDrawn = null;
+      window.clearTimeout(timer);
+      finish();
+      const feed = s.engine ? feedOf(s.engine) : undefined;
+      if (feed) feed.onProgress = null;
+      return;
+    }
+    // Something of the page is up once its nodes are in (the feed says so); the wait
+    // starts then.
+    const f = s.engine ? feedOf(s.engine) : undefined;
+    const nodesIn = !f || !s.engine || s.engine.pageFile(s.page).loaded || !s.engine.pageFile(s.page).src;
+    if (nodesIn && !timer) {
+      timer = window.setTimeout(() => {
+        if (mine !== ticket || !opening()) return;
+        s.onDrawn = null;
+        if (f) f.onProgress = null;
+        finish();
+      }, SHARP_WAIT_MS);
+    }
+  };
+  s.requestDraw();
+}
+
+/** Closes the open file: the canvas empties and the workers drop the document. */
+async function closeFile(): Promise<void> {
+  const mine = ++ticket;
+  cancel();
+  if (stage) stage.onDrawn = null;
+  await leave();
+  if (mine !== ticket) return;
+  shown = null;
+  state.fileId = "";
+  state.docName = "";
+  state.pages = [];
+  state.status = "";
+  state.dropping = false;
+  state.missingFonts = [];
+  state.reimport = false;
+  showSelection(null);
+  document.title = "PublrDesign";
+  editing?.detach();
+  stage?.close();
+  if (stage) stage.engine = null;
+  const g = gpuReady ? await gpuReady : null;
+  g?.clear();
+  // The browser shows: every file open lets go (one whose edits have nowhere to go stays).
+  for (const r of [...residents.values()]) if (!unsaved(r)) release(r);
+  if (pool) {
+    const p = await pool;
+    const run = holding.then(() => {
+      held = null;
+      return closeInWorkers(p);
+    });
+    holding = run.catch(() => {});
+    await holding;
+  }
+}
+
+/** The name field's new value: the file is renamed (an empty name keeps the old one). */
+export async function rename(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const name = input.value.trim();
+  const id = state.fileId;
+  if (!name || state.readOnly || !id) {
+    input.value = state.docName;
+    return;
+  }
+  const meta = await updateMeta(id, { name });
+  if (!meta) return;
+  state.docName = meta.name;
+  document.title = `${meta.name} · PublrDesign`;
+}
+
+Publr.effect(() => {
+  const element = host.current as HTMLElement | null;
+  if (!element || stage) return;
+  const s = new Stage(element, (options.cacheMiB ?? 256) * 1048576);
+  stage = s;
+  s.onView = showView;
+  s.onSelect = showSelection;
+  installChecks(s);
+  const ed = new Editing(s);
+  editing = ed;
+  ed.onPages = () => {
+    const doc = s.doc;
+    if (doc) state.pages = doc.pages.map((pg, i) => ({ value: String(i), label: pg.name || `Page ${i + 1}` }));
+  };
+  ed.onPage = (page: number) => choosePage(String(page));
+  installEditing(ed);
+  keepFiles();
+  // The console's and the checks' view of the files open.
+  (window as unknown as { pdTabs: unknown }).pdTabs = {
+    residents: residentBytes,
+    /** What is kept: bytes held of the budget, and each file's pages (engine and GPU bytes). */
+    kept: () => ({
+      held: keep.held(),
+      budget: keep.budget,
+      files: [...residents.values()].map((r) => ({
+        name: r.name,
+        memory: r.engine.memory.buffer.byteLength,
+        live: r.engine.live(),
+        pages: (feedOf(r.engine)?.kept() ?? []).map((k) => ({ ...k, gpu: stage?.recordsBytes().find((x) => x.engine === r.engine && x.page === k.page)?.bytes ?? 0 })),
+      })),
+    }),
+    lastSwitch: () => ({ ...lastSwitch }),
+    get budget() {
+      return keep.budget;
+    },
+    set budget(bytes: number) {
+      keep.budget = bytes;
+      park();
+    },
+  };
+});
+
+// The route names the file: open it, or close the one open when the browser shows.
+Publr.effect(() => {
+  const id = route.fileId;
+  if (!host.current) return;
+  if (id && id !== state.fileId) void openFile(id);
+  else if (!id && state.fileId) void closeFile();
+});
+
+/** The canvas, once mounted (an editor shell draws over it). */
+export function viewerStage(): Stage | null {
+  return stage;
+}
+
+/** Changes to the open document (an editor shell's panels and tools edit through it). */
+export function viewerEditing(): Editing | null {
+  return editing;
+}
+
+/** The file shown: its engine, name, and its files by path (`pages/<id>.json`,
+ * `assets/<sha256>`) read from where it opened; null while none shows. */
+export function shownFile(): { engine: Engine; name: string; read: (path: string) => Promise<Uint8Array | null> } | null {
+  const r = shown;
+  if (!r) return null;
+  const src = r.source;
+  const read = async (path: string): Promise<Uint8Array | null> => {
+    if (src.kind === "file") return readPath(src.id, path);
+    if (src.kind === "url") {
+      const res = await fetch(src.base + path).catch(() => null);
+      return res?.ok ? unpack(new Uint8Array(await res.arrayBuffer())) : null;
+    }
+    return src.assets.find((a) => `assets/${a.hash}` === path)?.bytes ?? null;
+  };
+  return { engine: r.engine, name: r.name, read };
+}
+
+export function choosePage(value: string): void {
+  state.page = value;
+  stage?.showPage(Number(value));
+  // The address names the page shown, as Figma's `?node-id=` does (a link opens it).
+  const pages = stage?.doc?.pages ?? [];
+  const pg = pages[Number(value)];
+  if (pg?.id && state.fileId) {
+    const url = new URL(location.href);
+    // An id another page repeats (a file an earlier build imported) names no page.
+    if (pages.filter((x) => x.id === pg.id).length > 1) url.searchParams.delete("node-id");
+    else url.searchParams.set("node-id", pg.id.replaceAll(":", "-"));
+    history.replaceState(history.state, "", url);
+  }
+}
+
+/** What the editor shell around the viewer adds: `revealNode` selects a layer a link
+ * names and fills the view with it, on whichever page holds it. */
+export const viewerHooks = {
+  revealNode: null as null | ((id: string) => Promise<boolean>),
+};
+
+/** The page a `?node-id=` link names (the page itself or one of its top-level nodes); 0
+ * when there is no link or it names nothing found. */
+function linkedPage(doc: DocInfo, raw: string | null): number {
+  if (!raw) return 0;
+  const id = raw.replaceAll("-", ":");
+  const at = doc.pages.findIndex((pg) => pg.id === id || pg.frames.some((x) => x.id === id));
+  return Math.max(0, at);
+}
+
+/** A file opened from a link naming a node (`?node-id=12-34`, Figma's spelling, or
+ * `12:34`): a page shown; a layer selected and filling the view (the shell finds it on
+ * any page), or without the shell a top-level node fitted in view. */
+function showLinkedNode(s: Stage, raw: string | null): void {
+  const doc = s.doc;
+  if (!raw || !doc) return;
+  const id = raw.replaceAll("-", ":");
+  const at = doc.pages.findIndex((pg) => pg.id === id);
+  if (at >= 0) {
+    choosePage(String(at));
+    return;
+  }
+  if (viewerHooks.revealNode) {
+    void viewerHooks.revealNode(id).catch((err) => console.error("link", err));
+    return;
+  }
+  for (let i = 0; i < doc.pages.length; i++) {
+    const f = doc.pages[i].frames.find((x) => x.id === id);
+    if (!f) continue;
+    choosePage(String(i));
+    s.showRect(f.box[0], f.box[1], f.box[2], f.box[3]);
+    return;
+  }
+}
+
+export function zoomIn(): void {
+  stage?.zoomTo(stage.cam.z * 2);
+}
+
+export function zoomOut(): void {
+  stage?.zoomTo(stage.cam.z / 2);
+}
+
+export function zoomTo(z: number): void {
+  stage?.zoomTo(z);
+}
+
+export function zoomToFit(): void {
+  stage?.fit();
+}
+
+export function dragOver(event: DragEvent): void {
+  event.preventDefault();
+  if (event.dataTransfer?.types.includes("Files")) state.dropping = true;
+}
+
+export function dragLeave(event: DragEvent): void {
+  const into = event.relatedTarget as Node | null;
+  if (!into || !(event.currentTarget as HTMLElement).contains(into)) state.dropping = false;
+}
+
+/** Dropped .fig or .pubd files go into the file browser; the first one opens. */
+export function drop(event: DragEvent): void {
+  event.preventDefault();
+  state.dropping = false;
+  const files = Array.from(event.dataTransfer?.files ?? []);
+  if (files.length) void importAndShow(files, null, true);
+}
+
+/** Takes the instance's options once, before the canvas host mounts. */
+export function start(props: ViewerProps): void {
+  options = props;
+}
+
+export function Viewer(props: ViewerProps) {
+  start(props);
+  return (
+    <div data-viewer class="flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground">
+      <header hidden={props.chrome === false} class="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-background px-2">
+        <ToolbarButton title={Publr.t("Back to files")} label={Publr.t("Back to files")} onClick={() => navigate("/")}>
+          <Icon name="home" size="sm" />
+        </ToolbarButton>
+        <div data-file-title class="flex min-w-0 flex-1 items-center gap-1.5">
+          <Text variant="body-sm" tone="muted" classes="shrink-0 truncate max-md:hidden">
+            {state.location}
+          </Text>
+          {state.location && (
+            <Text variant="body-sm" tone="muted" classes="shrink-0 max-md:hidden">
+              /
+            </Text>
+          )}
+          {state.readOnly ? (
+            <Text variant="label-md-strong" classes="min-w-0 truncate">
+              {state.docName}
+            </Text>
+          ) : (
+            <InlineInput value={state.docName} label={Publr.t("File name")} classes="min-w-0 rounded px-1 text-xs font-semibold hover:ring-1 hover:ring-border focus:ring-1 focus:ring-primary" onChange={(event: Event) => rename(event)} />
+          )}
+        </div>
+        {state.missingFonts.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <ToolbarButton variant="text" title={Publr.t("Missing fonts")} label={Publr.t("Missing fonts")} classes="shrink-0 gap-1 text-warning">
+                <Icon name="alert-triangle" size="sm" />
+                <span class="max-md:hidden">{state.missingLabel}</span>
+              </ToolbarButton>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="right" classes="w-80">
+              <div class="px-2 py-1.5">
+                <Text as="p" variant="body-sm" tone="muted">
+                  {Publr.t("This file uses fonts you do not have. Its text draws as the file stored it; edited text would use a fallback font.")}
+                </Text>
+              </div>
+              {state.missingFonts.map((f) => (
+                <div data-missing-font={f.family} class="px-2 py-1">
+                  <Text as="p" variant="label-sm-strong">
+                    {f.family}
+                  </Text>
+                  <Text as="p" variant="body-xs" tone="muted">
+                    {f.styles}
+                  </Text>
+                </div>
+              ))}
+              <DropdownMenuSeparator />
+              {state.localFonts && <DropdownMenuItem onClick={() => useLocalFonts()}>{Publr.t("Use fonts installed on this computer")}</DropdownMenuItem>}
+              <DropdownMenuItem onClick={() => uploadFonts()}>{Publr.t("Upload fonts…")}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        {state.pages.length > 1 && (
+          <Select value={state.page} onChange={(value: string) => choosePage(value)} classes="w-48 max-md:hidden">
+            <SelectTrigger label={Publr.t("Page")}>
+              <SelectValue>{Publr.t("Page")}</SelectValue>
+            </SelectTrigger>
+            <SelectContent align="right">
+              {state.pages.map((p) => (
+                <SelectItem value={p.value}>{p.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <div class="flex shrink-0 items-center gap-0.5">
+          <ToolbarButton variant="text" title={Publr.t("Zoom out (-)")} label={Publr.t("Zoom out")} onClick={() => zoomOut()}>
+            −
+          </ToolbarButton>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <ToolbarButton variant="text" title={Publr.t("Zoom")} label={Publr.t("Zoom")} classes="min-w-16 tabular-nums">
+                {state.zoom}
+              </ToolbarButton>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="right" classes="min-w-44">
+              <DropdownMenuItem onClick={() => zoomIn()}>{Publr.t("Zoom in")}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => zoomOut()}>{Publr.t("Zoom out")}</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => zoomToFit()}>{Publr.t("Zoom to fit (Shift+1)")}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => zoomTo(0.5)}>{Publr.t("Zoom to 50%")}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => zoomTo(1)}>{Publr.t("Zoom to 100% (Shift+0)")}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => zoomTo(2)}>{Publr.t("Zoom to 200%")}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <ToolbarButton title={Publr.t("Zoom in (+)")} label={Publr.t("Zoom in")} onClick={() => zoomIn()}>
+            <Icon name="plus" size="sm" />
+          </ToolbarButton>
+          <ToolbarButton title={Publr.t("Zoom to fit (Shift+1)")} label={Publr.t("Zoom to fit")} onClick={() => zoomToFit()}>
+            <Icon name="viewport-fit" size="sm" />
+          </ToolbarButton>
+        </div>
+      </header>
+      <main class="relative min-h-0 flex-1" onDragOver={(event: DragEvent) => dragOver(event)} onDragLeave={(event: DragEvent) => dragLeave(event)} onDrop={(event: DragEvent) => drop(event)}>
+        <canvas ref={gpuHost} data-gpu-canvas class="absolute inset-0 block h-full w-full" />
+        <div ref={host} data-canvas-host class="absolute inset-0" />
+        <div data-hud hidden={props.chrome === false} class="pointer-events-none absolute bottom-2 left-2 flex gap-3 rounded-md bg-background/85 px-2 py-1 text-foreground shadow-sm">
+          <Text variant="mono-xs">{state.renderer}</Text>
+          {state.renderer === "GPU" ? (
+            <div class="flex gap-3">
+              <Text variant="mono-xs">{`pending ${state.pending}`}</Text>
+              <Text variant="mono-xs">{state.gpuFrame}</Text>
+              <Text variant="mono-xs">{state.gpuDraws}</Text>
+              <Text variant="mono-xs">{state.gpuFallbacks}</Text>
+              <Text variant="mono-xs">{state.fps}</Text>
+            </div>
+          ) : (
+            <div class="flex gap-3">
+              <Text variant="mono-xs">{state.level}</Text>
+              <Text variant="mono-xs">{`pending ${state.pending}`}</Text>
+              <Text variant="mono-xs">{state.tiles}</Text>
+              <Text variant="mono-xs">{`last ${state.lastMs}`}</Text>
+              <Text variant="mono-xs">{state.fps}</Text>
+            </div>
+          )}
+          <Text variant="mono-xs">{state.wasm}</Text>
+        </div>
+        {state.selection && (
+          <div data-selection hidden={props.chrome === false} class="pointer-events-none absolute right-2 bottom-2 flex max-w-[45%] items-baseline gap-2 rounded-md bg-background/85 px-2 py-1 shadow-sm">
+            <Text variant="label-sm-strong" classes="truncate">
+              {state.selection}
+            </Text>
+            <Text variant="mono-xs" tone="muted" classes="truncate">
+              {state.selectionDetail}
+            </Text>
+          </div>
+        )}
+        {state.status && (
+          <div data-status role="status" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-lg bg-popover px-4 py-2 text-popover-foreground shadow-lg">
+            <Text variant="body-sm">{state.status}</Text>
+          </div>
+        )}
+        {state.dropping && <DropOverlay label={Publr.t("Drop .fig or .pubd files to import them")} />}
+      </main>
+    </div>
+  );
+}

@@ -1,0 +1,26 @@
+// A section of the Design tab: its title row (40 px) with the section's actions on the
+// right, then its rows; a line under it. An empty section (Stroke with none) is only its
+// title row, the title dimmed.
+export type SectionProps = {
+  title: string;
+  /** No rows: the title row alone. */
+  empty?: boolean;
+  /** The actions on the title row (icon buttons). */
+  actions?: JSX.Element;
+  children?: JSX.Element;
+  name?: string;
+  /** The rows' box, when the section lays its rows out itself (Styles). */
+  body?: string;
+};
+
+export function Section({ title, empty = false, actions, children, name = "", body = "flex flex-col gap-2 pt-1 pr-2 pb-4 pl-4" }: SectionProps) {
+  return (
+    <section class="border-b border-[var(--pd-border)]" data-pd-section={name || title}>
+      <header class="flex h-10 items-center pr-2 pl-4">
+        <h3 class={["min-w-0 flex-1 truncate text-[11px] font-[550]", empty ? "text-[var(--pd-text-2)]" : "text-[var(--pd-text)]"]}>{title}</h3>
+        <div class="flex items-center">{actions}</div>
+      </header>
+      {!empty && <div class={body}>{children}</div>}
+    </section>
+  );
+}

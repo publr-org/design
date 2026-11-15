@@ -1,0 +1,86 @@
+// The short preview before sampling adds anything: what was found in the selection, the
+// values the system has already (or within ΔE00 2) shown as such and left out, the new
+// ones ticked; for a component, the block it becomes the default of. Add puts the
+// ticked ones in as one undo step. Also the right-click items on the canvas beside that
+// open it (only while the design system canvas is open).
+import { Publr } from "publr-jsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { Choice } from "../design/Choice.ptsx";
+import { applySample, closeSample, openSample, sample, SAMPLE_LABELS, toggleRow } from "./sample";
+import type { SampleKind } from "./sample";
+import { sys } from "./store";
+
+const KINDS: SampleKind[] = ["colors", "type", "icons", "radii", "spacing", "shadows", "primitive"];
+
+/** The canvas menu's items for sampling into the design system. */
+export function SampleMenuItems() {
+  return (
+    <div data-pd-sample-menu>
+      {KINDS.map((k) => (
+        <DropdownMenuItem key={k} size="xs" onClick={() => openSample(k)}>
+          <span class="flex-1" data-pd-sample={k}>
+            {SAMPLE_LABELS[k]}
+          </span>
+        </DropdownMenuItem>
+      ))}
+      <DropdownMenuSeparator size="xs" />
+    </div>
+  );
+}
+
+/** The dialog takes the keys when it opens (Enter adds, Escape cancels). */
+const focusDialog = Publr.ref((el: HTMLElement) => {
+  requestAnimationFrame(() => el.focus());
+});
+
+function key(event: KeyboardEvent): void {
+  if (event.key === "Escape") closeSample();
+  if (event.key === "Enter") applySample();
+}
+
+export function SampleDialog() {
+  const adding = () => sample.rows.filter((r) => r.status === "new" && r.include).length;
+  return (
+    <div data-pd-sample-dialog hidden={!sample.open}>
+      {sample.open && (
+        <div class="fixed inset-0 z-[85] flex items-center justify-center bg-black/20" onPointerDown={(e: PointerEvent) => e.target === e.currentTarget && closeSample()}>
+          <section role="dialog" aria-label={sample.title} tabindex={-1} class="flex max-h-[70vh] w-[420px] flex-col rounded-[13px] bg-[var(--pd-bg)] text-[11px] text-[var(--pd-text)] shadow-[var(--pd-toolbar-shadow)] outline-none" onKeyDown={(e: KeyboardEvent) => key(e)} ref={focusDialog}>
+            <header class="flex h-11 shrink-0 items-center border-b border-[var(--pd-border)] px-4">
+              <h2 class="flex-1 text-[13px] font-[550]">{sample.title}</h2>
+              <span class="text-[var(--pd-text-2)]">{sys.projectName}</span>
+            </header>
+            <div data-pd-scroll class="min-h-0 flex-1 overflow-y-auto py-1">
+              {sample.note && <div class="px-4 py-3 text-[var(--pd-text-2)]">{sample.note}</div>}
+              {sample.rows.map((r) => (
+                <label key={r.key} class={["flex min-h-9 items-center gap-2.5 px-4 py-1.5", r.status === "exists" ? "opacity-60" : "cursor-pointer hover:bg-[var(--pd-bg-2)]"]} data-pd-sample-row={r.key}>
+                  <input type="checkbox" class="h-3.5 w-3.5 shrink-0 accent-[var(--pd-brand)]" checked={r.include} disabled={r.status === "exists"} onChange={() => toggleRow(r.key)} />
+                  {r.swatch && <span class="h-5 w-5 shrink-0 rounded-[4px] border border-black/10" style={`background:${r.swatch}`}></span>}
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate font-[550]">{r.label}</span>
+                    <span class="block truncate text-[var(--pd-text-2)]">{r.detail}</span>
+                  </span>
+                  {r.status === "exists" && <span class="shrink-0 rounded-[4px] bg-[var(--pd-bg-2)] px-1.5 py-0.5 text-[10px]">{Publr.t("folded")}</span>}
+                </label>
+              ))}
+              {sample.kind === "primitive" && sample.rows.length > 0 && (
+                <div class="flex items-center gap-2 px-4 py-2">
+                  <span class="shrink-0 text-[var(--pd-text-2)]">{Publr.t("Default of")}</span>
+                  <Choice label={Publr.t("Block")} value={sys.blocks.find((b) => b.type === sample.block)?.label ?? sample.block} items={sys.blocks.map((b) => ({ value: b.type, label: `${b.label} · ${b.category}` }))} width={240} name="sample-block" onPick={(v: string) => (sample.block = v)} />
+                </div>
+              )}
+            </div>
+            <footer class="flex h-12 shrink-0 items-center justify-end gap-2 border-t border-[var(--pd-border)] px-4">
+              <button type="button" class="h-7 rounded-[5px] px-3 text-[11px] hover:bg-[var(--pd-bg-2)]" onClick={() => closeSample()}>
+                {Publr.t("Cancel")}
+              </button>
+              <button type="button" class="h-7 rounded-[5px] bg-[var(--pd-brand)] px-3 text-[11px] font-[550] text-white disabled:opacity-40" disabled={adding() === 0 || (sample.kind === "primitive" && !sample.block)} data-pd-sample-apply onClick={() => applySample()}>
+                {sample.kind === "primitive" ? Publr.t("Set default") : adding() === 0 ? Publr.t("Nothing new") : `${Publr.t("Add")} ${adding()}`}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,156 @@
+// The Feature requests window, floating like the Variables window. On top, the feature a
+// greyed item stands for, voted on as people know it from feature boards: a box with ▲
+// and the count beside its name and what it is; "Notify me when it ships" opens an email
+// field. Below, the other features not built yet, each with its own vote box, top voted
+// first (or by area), searchable; a row's name opens it on top. Votes and emails go to
+// publr.app (requests.ts).
+import { Publr } from "publr-jsx";
+import { IconButton } from "./IconButton.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import { closeRequests, openRequest, requests, setQuery, setSort, subscribe, vote, windowDrag } from "./requests";
+
+type VoteBoxProps = { featureKey: string; votes: number; voted: boolean; big?: boolean };
+
+/** ▲ over the count: a vote, filled once this browser gave it (a click takes it back). */
+function VoteBox({ featureKey, votes, voted, big = false }: VoteBoxProps) {
+  return (
+    <button
+      type="button"
+      class={[
+        "flex shrink-0 flex-col items-center justify-center rounded-[8px] border transition-colors disabled:cursor-default disabled:opacity-40",
+        big ? "h-[60px] w-[52px]" : "h-[40px] w-[40px]",
+        voted ? "border-[var(--pd-brand)] bg-[var(--pd-brand)] text-white" : "border-[var(--pd-border)] text-[var(--pd-text)] hover:border-[var(--pd-brand)] hover:text-[var(--pd-brand)]",
+      ]}
+      title={voted ? Publr.t("You voted for this. Click to take your vote back.") : Publr.t("Vote for this feature")}
+      aria-pressed={voted}
+      disabled={!requests.live}
+      data-pd-upvote={featureKey}
+      onClick={(event: MouseEvent) => {
+        event.stopPropagation();
+        void vote(featureKey);
+      }}
+    >
+      <PdIcon name="vote" size={big ? 20 : 16} classes="-my-0.5" />
+      <span class={big ? "text-[15px] leading-5 font-[600]" : "text-[11px] leading-4 font-[550]"}>{votes}</span>
+    </button>
+  );
+}
+
+/** The feature the window opened on. */
+function Focused() {
+  return (
+    <section class="flex flex-col gap-4 px-5 pt-2 pb-5" data-pd-request-focus={requests.current?.key ?? ""}>
+      <div class="flex items-start gap-4">
+        <VoteBox featureKey={requests.current?.key ?? ""} votes={requests.current?.votes ?? 0} voted={requests.current?.voted ?? false} big />
+        <div class="flex min-w-0 flex-1 flex-col gap-1 pt-1">
+          <span class="text-[10px] font-[550] tracking-[0.04em] text-[var(--pd-text-3)] uppercase">
+            {requests.current?.area ?? ""} · {Publr.t("Not built yet")}
+          </span>
+          <h3 class="text-[15px] leading-5 font-[600]">{requests.current?.title ?? ""}</h3>
+          <p class="leading-4 text-[var(--pd-text-2)]">{requests.current?.description ? `${requests.current.description[0].toUpperCase()}${requests.current.description.slice(1)}.` : ""}</p>
+        </div>
+      </div>
+      <p class="text-[var(--pd-text-2)]">{requests.current?.voted ? Publr.t("Thanks for your vote. The most wanted features are built first.") : Publr.t("Vote to get it built sooner: the most wanted features are built first.")}</p>
+      {requests.subscribed ? (
+        <p class="flex items-center gap-1.5 text-[var(--pd-text-2)]" data-pd-request-subscribed>
+          <PdIcon name="check" size={16} />
+          {Publr.t("We will email")} {requests.subscribed} {Publr.t("when it ships.")}
+        </p>
+      ) : requests.notifying ? (
+        <form
+          class="flex flex-col gap-1.5"
+          onSubmit={(event: Event) => {
+            event.preventDefault();
+            void subscribe(requests.current?.key ?? "");
+          }}
+        >
+          <div class="flex gap-2">
+            <input
+              type="email"
+              class="h-8 min-w-0 flex-1 rounded-[6px] bg-[var(--pd-bg-2)] px-2.5 text-[11px] outline outline-1 -outline-offset-1 outline-transparent placeholder:text-[var(--pd-text-3)] focus:outline-[var(--pd-brand)]"
+              placeholder={Publr.t("Your email")}
+              autocomplete="email"
+              value={requests.email}
+              data-pd-request-email
+              onInput={(event: Event) => (requests.email = (event.currentTarget as HTMLInputElement).value)}
+              onKeyDown={(event: KeyboardEvent) => event.stopPropagation()}
+            />
+            <button type="submit" class="h-8 shrink-0 rounded-[6px] bg-[var(--pd-brand)] px-3 text-[11px] font-[550] text-white disabled:opacity-40" disabled={!requests.live}>
+              {Publr.t("Notify me")}
+            </button>
+          </div>
+          <span class="text-[10px] text-[var(--pd-text-3)]">{Publr.t("Only about this feature. Unsubscribe from any email.")}</span>
+        </form>
+      ) : (
+        <button type="button" class="flex h-7 items-center gap-1 self-start rounded-[6px] pr-2 pl-1 text-[var(--pd-text-2)] hover:bg-[var(--pd-bg-2)] hover:text-[var(--pd-text)]" data-pd-request-notify onClick={() => (requests.notifying = true)}>
+          <PdIcon name="bell" size={20} />
+          {Publr.t("Notify me when it ships")}
+        </button>
+      )}
+    </section>
+  );
+}
+
+export function FeatureRequests() {
+  return (
+    <div data-pd-requests-root>
+      {requests.open && (
+        <div
+          data-pd-requests
+          role="dialog"
+          aria-label={Publr.t("Feature requests")}
+          class="fixed z-40 flex max-h-[min(640px,calc(100vh-32px))] w-[400px] flex-col overflow-clip rounded-[13px] border border-[var(--pd-border)] bg-[var(--pd-bg)] text-[11px] text-[var(--pd-text)] shadow-[0_2px_5px_rgba(0,0,0,0.15),0_10px_16px_rgba(0,0,0,0.12),0_0_0.5px_rgba(0,0,0,0.15)]"
+          style={{ left: `${requests.x}px`, top: `${requests.y}px` }}
+        >
+          <header class="flex h-11 shrink-0 cursor-default items-center pr-2 pl-5" onPointerDown={(event: PointerEvent) => windowDrag(event)}>
+            <h2 class="min-w-0 flex-1 truncate text-[11px] font-[550] text-[var(--pd-text-2)]">{Publr.t("Feature requests")}</h2>
+            <IconButton icon="close" title={Publr.t("Close")} onClick={() => closeRequests()} />
+          </header>
+          {requests.current && <Focused />}
+          {requests.problem && (
+            <p class="mx-5 mb-3 rounded-[6px] bg-[var(--pd-bg-2)] px-2.5 py-2 text-[var(--pd-text-2)]" data-pd-request-problem>
+              {requests.problem}
+            </p>
+          )}
+          <div class="flex shrink-0 flex-col gap-2 border-t border-[var(--pd-border)] px-5 pt-4 pb-2">
+            <div class="flex items-center">
+              <span class="flex-1 text-[11px] font-[600]">{requests.current ? Publr.t("Vote for more") : Publr.t("Vote for what to build next")}</span>
+              <div class="flex rounded-[6px] bg-[var(--pd-bg-2)] p-0.5">
+                <button type="button" class={["h-6 rounded-[5px] px-2", requests.sort === "votes" ? "bg-[var(--pd-bg)] font-[550] shadow-[0_0_0_0.5px_var(--pd-border)]" : "text-[var(--pd-text-2)]"]} onClick={() => setSort("votes")}>
+                  {Publr.t("Top")}
+                </button>
+                <button type="button" class={["h-6 rounded-[5px] px-2", requests.sort === "area" ? "bg-[var(--pd-bg)] font-[550] shadow-[0_0_0_0.5px_var(--pd-border)]" : "text-[var(--pd-text-2)]"]} onClick={() => setSort("area")}>
+                  {Publr.t("By area")}
+                </button>
+              </div>
+            </div>
+            <label class="flex h-7 items-center rounded-[6px] bg-[var(--pd-bg-2)] outline outline-1 -outline-offset-1 outline-transparent focus-within:outline-[var(--pd-brand)]">
+              <PdIcon name="search" classes="text-[var(--pd-text-2)]" />
+              <input
+                class="h-7 min-w-0 flex-1 bg-transparent pr-2 text-[11px] outline-none placeholder:text-[var(--pd-text-3)]"
+                placeholder={Publr.t("Search features")}
+                value={requests.query}
+                data-pd-requests-search
+                onInput={(event: Event) => setQuery((event.currentTarget as HTMLInputElement).value)}
+                onKeyDown={(event: KeyboardEvent) => event.stopPropagation()}
+              />
+            </label>
+          </div>
+          <ul data-pd-scroll class="min-h-[140px] flex-1 overflow-y-auto px-3 pb-3" data-pd-requests-list>
+            {requests.shown.map((r) => (
+              <li key={r.key} class="flex cursor-pointer items-center gap-3 rounded-[8px] px-2 py-1.5 hover:bg-[var(--pd-bg-2)]" data-pd-request={r.key} onClick={() => openRequest(r.key)}>
+                <VoteBox featureKey={r.key} votes={r.votes} voted={r.voted} />
+                <div class="flex min-w-0 flex-1 flex-col">
+                  <span class="truncate font-[550]" title={r.description}>
+                    {r.title}
+                  </span>
+                  <span class="truncate text-[var(--pd-text-3)]">{r.area}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}

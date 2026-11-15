@@ -1,0 +1,38 @@
+// A 24 px icon button of the editor's panels (and 32 px in the toolbar): the icon in the
+// panel's text colour, a soft square under it on hover, the brand colour when on.
+import { PdIcon } from "./PdIcon.ptsx";
+import type { PdIconName } from "./icons";
+
+export type IconButtonProps = {
+  icon: PdIconName;
+  title: string;
+  /** Chosen (a tool, a toggle). */
+  on?: boolean;
+  size?: 24 | 32;
+  /** Dimmed (a placeholder that does nothing yet). */
+  quiet?: boolean;
+  classes?: string;
+  onClick?: (event: MouseEvent) => void;
+};
+
+export function IconButton({ icon, title, on = false, size = 24, quiet = false, classes = "", onClick }: IconButtonProps) {
+  return (
+    <button
+      type="button"
+      class={[
+        "flex shrink-0 items-center justify-center rounded-[5px] outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--pd-brand)]",
+        size === 32 ? "h-8 w-8" : "h-6 w-6",
+        on ? "bg-[var(--pd-brand)] text-[var(--pd-on-brand)]" : "text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]",
+        quiet && !on ? "opacity-90" : "",
+        classes,
+      ]}
+      title={title}
+      aria-label={title}
+      aria-pressed={on}
+      data-pd-button={icon}
+      onClick={onClick}
+    >
+      <PdIcon name={icon} />
+    </button>
+  );
+}

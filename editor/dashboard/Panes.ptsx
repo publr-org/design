@@ -1,0 +1,107 @@
+// The comparison area for the current mode: side by side (Figma, ours, the heat map),
+// swipe (ours over Figma, cut at a draggable divider), flicker (the two alternating twice
+// a second) or build-up (ours stopped after N nodes, the Nth framed). Every pane shows
+// the same view: the images sit in a "world" moved and scaled by one shared transform,
+// drawn with crisp pixels once an image pixel covers more than one device pixel. Each
+// layout draws fresh panes, so an image of the last export never stands in for the next.
+import { Show } from "publr";
+import { state } from "./store";
+import { dividerStart, hover, leave, panStart, wheel } from "./view";
+
+/** The transparent-pixel checkerboard behind the images. */
+const CHECKER =
+  "background-color:#1e1f22;background-image:linear-gradient(45deg,#232427 25%,transparent 25%),linear-gradient(-45deg,#232427 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#232427 75%),linear-gradient(-45deg,transparent 75%,#232427 75%);background-size:16px 16px;background-position:0 0,0 8px,8px -8px,-8px 0";
+
+const imageClasses = "absolute top-0 left-0 block max-w-none select-none";
+
+/** A label in a pane's corner. */
+function Caption({ children, right = false }: { children?: JSX.Element; right?: boolean }) {
+  return (
+    <div class={["pointer-events-none absolute top-1.5 z-[3] rounded border border-border bg-background/85 px-1.5 py-0.5 text-[12px]", right ? "right-1.5" : "left-1.5"]}>
+      {children}
+    </div>
+  );
+}
+
+/** One pane: the pan and zoom surface, the world holding its images, and its labels. */
+function Pane({ children, overlay }: { children?: JSX.Element; overlay?: JSX.Element }) {
+  return (
+    <div
+      data-pane
+      class="relative min-w-0 flex-1 cursor-grab overflow-hidden data-[dragging]:cursor-grabbing"
+      style={CHECKER}
+      onWheel={wheel}
+      onMouseDown={panStart}
+      onMouseMove={hover}
+      onMouseLeave={leave}
+    >
+      <div data-world class="absolute top-0 left-0 origin-top-left will-change-transform" style={{ transform: state.transform, imageRendering: state.pixelated ? "pixelated" : "auto" }}>
+        {children}
+      </div>
+      {overlay}
+    </div>
+  );
+}
+
+function RefImage() {
+  return <img data-image="ref" src={state.refSrc} width={state.width} height={state.height} draggable={false} alt="" class={imageClasses} />;
+}
+
+export function Panes() {
+  return (
+    <Show when={state.shown} keyed>
+      {state.mode === "side" && (
+        <>
+          <Pane overlay={<Caption>Reference</Caption>}>
+            <RefImage />
+          </Pane>
+          <Pane overlay={<Caption>Ours</Caption>}>
+            <img data-image="ours" src={state.oursSrc} width={state.width} height={state.height} draggable={false} alt="" class={imageClasses} />
+          </Pane>
+          <Pane overlay={<Caption>Diff</Caption>}>
+            <img data-image="diff" src={state.diffSrc} width={state.width} height={state.height} draggable={false} alt="" class={imageClasses} />
+          </Pane>
+        </>
+      )}
+      {state.mode === "swipe" && (
+        <Pane
+          overlay={
+            <>
+              <Caption>Reference</Caption>
+              <Caption right>Ours</Caption>
+              <div data-divider class="absolute inset-y-0 z-[2] -ml-px w-0.5 cursor-ew-resize bg-white shadow-[0_0_0_1px_rgb(0_0_0/0.4)]" style={{ left: state.dividerLeft }} onMouseDown={dividerStart}>
+                <span class="absolute inset-y-0 -right-2 -left-2" />
+                <span class="absolute top-1/2 -left-[7px] -mt-3.5 h-7 w-4 rounded bg-white shadow-[0_1px_4px_rgb(0_0_0/0.5)]" />
+              </div>
+            </>
+          }
+        >
+          <RefImage />
+          <img data-image="ours" src={state.oursSrc} width={state.width} height={state.height} draggable={false} alt="" class={imageClasses} style={{ clipPath: state.oursClip }} />
+        </Pane>
+      )}
+      {state.mode === "flicker" && (
+        <Pane
+          overlay={
+            <div
+              data-flicker-label
+              class={["pointer-events-none absolute top-1.5 left-1.5 z-[3] rounded border bg-background/85 px-1.5 py-0.5 text-[12px]", state.flickerRef ? "border-primary" : "border-[#ff3b9a]"]}
+            >
+              {state.flickerRef ? "Reference" : "Ours"}
+              {state.flickerPaused ? "  (paused)" : ""}
+            </div>
+          }
+        >
+          <img data-image="ref" src={state.refSrc} width={state.width} height={state.height} draggable={false} alt="" class={[imageClasses, state.flickerRef ? "" : "invisible"]} />
+          <img data-image="ours" src={state.oursSrc} width={state.width} height={state.height} draggable={false} alt="" class={[imageClasses, state.flickerRef ? "invisible" : ""]} />
+        </Pane>
+      )}
+      {state.mode === "build" && (
+        <Pane overlay={<Caption>Ours, built up</Caption>}>
+          <img data-image="ours" src={state.oursSrc} width={state.width} height={state.height} draggable={false} alt="" class={imageClasses} />
+          {state.hlShown && <div data-highlight class="pointer-events-none absolute border-solid border-[#ff3b9a] bg-[#ff3b9a]/12" style={state.hlStyle} />}
+        </Pane>
+      )}
+    </Show>
+  );
+}

@@ -1,0 +1,75 @@
+// The variable picker, after the editor's: a search box over the variables a field may
+// take (of its type, offered where the field is), by collection and group, colours with
+// their swatch and other kinds with their value; the variable a field already follows is
+// marked. It aliases a value in the Variables window and binds a field of the Design tab.
+import { Publr } from "publr-jsx";
+import { FloatingPanel } from "../../../ui/src/components/FloatingPanel/FloatingPanel.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import { closePick, pickVariable, setPickQuery, vars } from "./variables";
+
+function focusSearch(el: HTMLInputElement | null): void {
+  if (el) requestAnimationFrame(() => el.focus());
+}
+
+export function VariablePicker() {
+  return (
+    <div data-pd-var-picker-root>
+      {vars.pick && (
+        <FloatingPanel top={vars.pickTop} left={vars.pickLeft} width={240} label={vars.pickTitle} classes="!p-0">
+          <div data-pd-var-picker class="flex max-h-[400px] flex-col text-[11px]">
+            <div class="flex h-10 shrink-0 items-center border-b border-[var(--pd-menu-line)] pr-2 pl-4 font-[550]">
+              <span class="flex-1">{vars.pickTitle}</span>
+              <button type="button" class="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-white/10" title={Publr.t("Close")} onClick={() => closePick()}>
+                <PdIcon name="close" />
+              </button>
+            </div>
+            <div class="shrink-0 p-2">
+              <label class="flex h-7 items-center rounded-[5px] bg-white/10 focus-within:outline focus-within:outline-1 focus-within:outline-[var(--pd-brand)]">
+                <PdIcon name="search" classes="text-white/60" />
+                <input
+                  class="h-7 min-w-0 flex-1 bg-transparent pr-2 text-white outline-none placeholder:text-white/40"
+                  placeholder={Publr.t("Search")}
+                  value={vars.pickQuery}
+                  ref={focusSearch}
+                  data-pd-var-picker-search
+                  onInput={(event: Event) => setPickQuery((event.currentTarget as HTMLInputElement).value)}
+                  onKeyDown={(event: KeyboardEvent) => {
+                    event.stopPropagation();
+                    if (event.key === "Escape") closePick();
+                  }}
+                />
+              </label>
+            </div>
+            <div data-pd-scroll class="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+              {vars.pickItems.length === 0 && <div class="px-2 py-2 text-white/60">{Publr.t("No variables")}</div>}
+              {vars.pickItems.map((it) =>
+                it.head ? (
+                  <div key={it.key} class={it.path === "group" ? "truncate px-2 pt-2 pb-1 text-white/60" : "truncate px-2 pt-3 pb-1 font-[550] text-white"}>
+                    {it.name}
+                  </div>
+                ) : (
+                  <button
+                    key={it.key}
+                    type="button"
+                    class={["flex h-7 w-full items-center gap-2 rounded-[5px] px-2 text-left text-white", it.current ? "bg-white/15" : "hover:bg-[var(--pd-brand)]"]}
+                    title={it.path}
+                    data-pd-pick={it.path}
+                    onClick={() => pickVariable(it.id)}
+                  >
+                    {it.type === "color" ? (
+                      <span class="block h-3.5 w-3.5 shrink-0 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)]" style={{ background: it.swatch }}></span>
+                    ) : (
+                      <PdIcon name={it.type === "number" ? "var-number" : it.type === "string" ? "var-string" : "var-boolean"} size={20} classes="-m-0.5 shrink-0 text-white/70" />
+                    )}
+                    <span class="min-w-0 flex-1 truncate">{it.name}</span>
+                    {it.value && <span class="max-w-[64px] shrink-0 truncate text-white/60">{it.value}</span>}
+                  </button>
+                ),
+              )}
+            </div>
+          </div>
+        </FloatingPanel>
+      )}
+    </div>
+  );
+}

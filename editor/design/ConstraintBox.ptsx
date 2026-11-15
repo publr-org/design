@@ -1,0 +1,50 @@
+// The constraints picture beside the constraint menus: a square in a box, a line from
+// each side of the box to the square, and a cross inside it; the lines that hold are
+// blue. A click on a line sets that side (Shift adds the opposite one: left and right,
+// top and bottom), a click on the cross centres.
+export type ConstraintBoxProps = {
+  /** "Left", "Right", "Left & right", "Center", "Scale". */
+  h: string;
+  /** "Top", "Bottom", "Top & bottom", "Center", "Scale". */
+  v: string;
+  /** A side picked: the axis and its Pubd value ("left", "left-right", "center"…). */
+  onPick?: (axis: "h" | "v", value: string) => void;
+};
+
+const on = (yes: boolean) => (yes ? "bg-[var(--pd-brand)]" : "bg-[var(--pd-text-3)] group-hover/c:bg-[var(--pd-text-2)]");
+
+function side(event: MouseEvent, axis: "h" | "v", which: string, now: string, onPick?: ConstraintBoxProps["onPick"]): void {
+  if (!onPick) return;
+  const both = axis === "h" ? "left-right" : "top-bottom";
+  const has = (x: string) => now.toLowerCase().startsWith(x) || now.toLowerCase().endsWith(x);
+  if (event.shiftKey) {
+    const other = axis === "h" ? (which === "left" ? "right" : "left") : which === "top" ? "bottom" : "top";
+    onPick(axis, has(other) || now.includes("&") ? both : which);
+  } else onPick(axis, which);
+}
+
+export function ConstraintBox({ h, v, onPick }: ConstraintBoxProps) {
+  return (
+    <div class="relative row-span-2 h-14 w-[88px] rounded-[5px] bg-[var(--pd-bg-2)]" data-pd-constraints={`${h}/${v}`}>
+      <span class="absolute top-1/2 left-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-[2px] outline outline-1 -outline-offset-1 outline-[var(--pd-text-3)]"></span>
+      <button type="button" class="group/c absolute top-1/2 left-1 flex h-4 w-6 -translate-y-1/2 items-center justify-center" title="Left" onClick={(e: MouseEvent) => side(e, "h", "left", h, onPick)}>
+        <span class={["h-px w-4", on(h === "Left" || h === "Left & right")]}></span>
+      </button>
+      <button type="button" class="group/c absolute top-1/2 right-1 flex h-4 w-6 -translate-y-1/2 items-center justify-center" title="Right" onClick={(e: MouseEvent) => side(e, "h", "right", h, onPick)}>
+        <span class={["h-px w-4", on(h === "Right" || h === "Left & right")]}></span>
+      </button>
+      <button type="button" class="group/c absolute top-0.5 left-1/2 flex h-3 w-4 -translate-x-1/2 items-center justify-center" title="Top" onClick={(e: MouseEvent) => side(e, "v", "top", v, onPick)}>
+        <span class={["h-2 w-px", on(v === "Top" || v === "Top & bottom")]}></span>
+      </button>
+      <button type="button" class="group/c absolute bottom-0.5 left-1/2 flex h-3 w-4 -translate-x-1/2 items-center justify-center" title="Bottom" onClick={(e: MouseEvent) => side(e, "v", "bottom", v, onPick)}>
+        <span class={["h-2 w-px", on(v === "Bottom" || v === "Top & bottom")]}></span>
+      </button>
+      <button type="button" class="group/c absolute top-1/2 left-1/2 flex h-3 w-3 -translate-x-1/2 -translate-y-[calc(50%+3px)] items-center justify-center" title="Center horizontally" onClick={() => onPick?.("h", "center")}>
+        <span class={["h-px w-3", on(h === "Center")]}></span>
+      </button>
+      <button type="button" class="group/c absolute top-1/2 left-1/2 flex h-3 w-3 -translate-x-[calc(50%+3px)] -translate-y-1/2 items-center justify-center" title="Center vertically" onClick={() => onPick?.("v", "center")}>
+        <span class={["h-3 w-px", on(v === "Center")]}></span>
+      </button>
+    </div>
+  );
+}

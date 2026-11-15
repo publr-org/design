@@ -1,0 +1,672 @@
+// The right panel while the design system has the focus: the selected item's value,
+// edited with the builder's controls in PublrDesign's style (the colour picker, the
+// font picker, the type scale's entry fields, a breakpoint's width and device, a role's
+// palette colour), its place in its list and Remove; a selected section's count and
+// Add; with nothing selected, what the system holds. Every control writes through
+// store.ts `change`: one undo step (a scrub or a picker drag is one too).
+//
+// The panes read `view`, which `refreshView` writes from the data whenever the
+// selection or the document changes; nothing here derives from the data while it renders.
+import { Publr } from "publr-jsx";
+import { ColorPicker } from "../../../ui/src/components/ColorPicker/ColorPicker.ptsx";
+import { Choice } from "../design/Choice.ptsx";
+import { Field } from "../design/Field.ptsx";
+import { IconButton } from "../design/IconButton.ptsx";
+import { Section } from "../design/Section.ptsx";
+import { iconImage } from "../../../editor/design/model/icons";
+import { addFromChip, nudge, removable, removeItem } from "./actions";
+import { cssColor, toHex } from "./color";
+import {
+  breakpointDevice,
+  colorContexts,
+  containers,
+  entryFamily,
+  familyOf,
+  fontLabel,
+  fontRoles,
+  fonts,
+  freeTokenName,
+  GROUPS,
+  moveBreakpoint,
+  renameContainer,
+  renameToken,
+  resolveValue,
+  roleColor,
+  rolePalette,
+  rolePaletteIn,
+  roleToken,
+  scaleTokens,
+  sectionLabel,
+  SECTION_OF,
+  semanticRoles,
+  setBreakpointWidth,
+  setContainerProp,
+  setContainerWidth,
+  setFontFamily,
+  setFontRole,
+  setRoleColor,
+  setValue,
+  styleBreakpoints,
+  tokenLabel,
+  TOKEN_PREFIX,
+  updateRole,
+  updateStyle,
+} from "./model";
+import type { Device, DesignSystem, ItemKind, ItemRef, SectionKey, TypeScaleEntry } from "./model";
+import { change, changeSystem, currentDoc, phased, sys } from "./store";
+
+const ADDABLE: Partial<Record<SectionKey, { kind: ItemKind; label: string }[]>> = {
+  tokens: [
+    { kind: "color", label: "Add colour" },
+    { kind: "spacing", label: "Add spacing" },
+    { kind: "radius", label: "Add radius" },
+    { kind: "shadow", label: "Add shadow" },
+  ],
+  fonts: [{ kind: "font", label: "Add font" }],
+  containers: [{ kind: "container", label: "Add container" }],
+  semantic: [{ kind: "role", label: "Add role" }],
+  typescale: [{ kind: "type", label: "Add style" }],
+  breakpoints: [{ kind: "breakpoint", label: "Add breakpoint" }],
+};
+
+const KIND_LABEL: Record<ItemKind, string> = {
+  color: "Colour",
+  spacing: "Spacing",
+  radius: "Radius",
+  shadow: "Shadow",
+  font: "Font",
+  icon: "Icon",
+  container: "Container",
+  role: "Semantic colour",
+  fontRole: "Font role",
+  type: "Type style",
+  block: "Primitive block",
+  breakpoint: "Breakpoint",
+};
+
+const TRANSFORMS = [
+  { value: "", label: "None" },
+  { value: "uppercase", label: "Uppercase" },
+  { value: "lowercase", label: "Lowercase" },
+  { value: "capitalize", label: "Capitalize" },
+];
+
+const DEVICES = [
+  { value: "mobile", label: "Mobile" },
+  { value: "tablet", label: "Tablet" },
+  { value: "desktop", label: "Desktop" },
+];
+
+const FALLBACKS = ["sans-serif", "serif", "monospace", "cursive"].map((v) => ({ value: v, label: v }));
+
+type Item = { value: string; label: string };
+
+/** What the panes show, written from the data. */
+export const view = Publr.reactive({
+  title: "",
+  /** "item", "section" or "summary". */
+  mode: "summary" as "item" | "section" | "summary",
+  kind: "" as ItemKind | "",
+  key: "",
+  section: "" as SectionKey | "",
+  name: "",
+  token: "",
+  value: "",
+  removable: false,
+  ordered: false,
+  where: "",
+  /** Colour. */
+  users: "",
+  /** Font. */
+  family: "",
+  fallback: "",
+  faces: "",
+  missing: false,
+  families: [] as Item[],
+  /** Font role. */
+  fontTokens: [] as Item[],
+  /** Semantic colour. */
+  description: "",
+  colorLabel: "",
+  current: "",
+  palette: [] as { name: string; label: string; hex: string }[],
+  /** The colour contexts (Light mode, Dark mode): the role's colour in each, and the
+   * one the palette sets. */
+  contexts: [] as { key: string; label: string; colour: string; hex: string }[],
+  context: "default",
+  /** Why the item is in the system, as Bring in's plan says (empty: no evidence). */
+  whyVariable: "",
+  whyEvidence: "",
+  whyConfidence: "",
+  whyReason: "",
+  /** Type style. */
+  roles: [] as Item[],
+  roleLabel: "",
+  weights: [] as Item[],
+  weightLabel: "",
+  size: "",
+  lineHeight: "",
+  letterSpacing: "",
+  caseLabel: "",
+  /** Breakpoint. */
+  width: "",
+  device: "",
+  base: false,
+  /** Container. */
+  padding: "",
+  /** Icon. */
+  image: "",
+  /** Section and summary. */
+  note: "",
+  count: "",
+  adds: [] as { kind: ItemKind; label: string }[],
+  groups: [] as { key: string; label: string; rows: { key: string; label: string; count: string }[] }[],
+});
+
+const px = (v: string) => /^(-?\d*\.?\d+)/.exec(v.trim())?.[1] ?? v;
+
+function count(s: DesignSystem, key: SectionKey): string {
+  const n: Record<SectionKey, number> = {
+    tokens: scaleTokens(s, "color").length + scaleTokens(s, "spacing").length + scaleTokens(s, "radius").length + scaleTokens(s, "shadow").length,
+    fonts: fonts(s).length,
+    icons: s.icons.length,
+    containers: containers(s).length,
+    semantic: semanticRoles(s).length,
+    typography: fontRoles(s).length,
+    typescale: s.typeScale.length,
+    blocks: sys.blocks.length,
+    breakpoints: styleBreakpoints(s).length,
+    patterns: 0,
+    templates: 0,
+  };
+  return String(n[key]);
+}
+
+// ------------------------------------------------------------ the colour picker
+
+const picker = Publr.reactive({ h: 0, s: 0, v: 0, hex: "000000" });
+/** A drag in the picker is under way: the picker leads, the value follows. */
+let dragging = false;
+/** The colour context the role pane's palette sets. */
+const roleContext = Publr.reactive({ key: "default" });
+
+let followed = "";
+
+function hsvOf(css: string): void {
+  const c = cssColor(css);
+  if (!c) return;
+  const max = Math.max(c.r, c.g, c.b);
+  const min = Math.min(c.r, c.g, c.b);
+  const d = max - min;
+  let h = picker.h;
+  if (d) {
+    if (max === c.r) h = ((c.g - c.b) / d) % 6;
+    else if (max === c.g) h = (c.b - c.r) / d + 2;
+    else h = (c.r - c.g) / d + 4;
+    h = (h * 60 + 360) % 360;
+  }
+  picker.h = h;
+  picker.s = max ? d / max : 0;
+  picker.v = max;
+  picker.hex = toHex(c, false).slice(1).toUpperCase();
+}
+
+function hexOfHsv(h: number, s: number, v: number): string {
+  const f = (n: number) => {
+    const k = (n + h / 60) % 6;
+    return v - v * s * Math.max(0, Math.min(k, 4 - k, 1));
+  };
+  return toHex({ r: f(5), g: f(3), b: f(1), a: 1 }, false);
+}
+
+function setColor(name: string, hex: string): void {
+  changeSystem((s) => setValue(s, name, hex), { kind: "color", key: name });
+}
+
+function pickColor(d: { hue: number; saturation: number; brightness: number; phase: string }): void {
+  const name = view.key;
+  picker.h = d.hue;
+  picker.s = d.saturation;
+  picker.v = d.brightness;
+  const hex = hexOfHsv(d.hue, d.saturation, d.brightness);
+  picker.hex = hex.slice(1).toUpperCase();
+  dragging = d.phase !== "end";
+  phased(d.phase === "start" ? "start" : d.phase === "end" ? "end" : "move", () => setColor(name, hex));
+}
+
+function typedHex(text: string): void {
+  const c = cssColor(text.startsWith("#") ? text : `#${text}`);
+  if (!c) return;
+  hsvOf(toHex(c));
+  setColor(view.key, toHex(c, false));
+}
+
+// ------------------------------------------------------------ the view
+
+/** Writes what the panes show for the selection now. */
+export function refreshView(): void {
+  const doc = sys.doc;
+  const ref = sys.selected;
+  if (!doc) return;
+  const s = doc.system;
+  view.groups = GROUPS.map((g) => ({ key: g.key, label: g.label, rows: g.sections.map((x) => ({ key: x.key, label: x.label, count: count(s, x.key) })) }));
+  if (!ref) {
+    const sec = sys.selectedSection;
+    view.mode = sec ? "section" : "summary";
+    view.title = sec ? sectionLabel(sec) : Publr.t("Design system");
+    view.section = sec;
+    if (sec) {
+      const meta = GROUPS.flatMap((g) => g.sections).find((x) => x.key === sec);
+      view.note = meta?.note ?? "";
+      view.count = `${count(s, sec)} ${Publr.t("items")}`;
+      view.adds = ADDABLE[sec] ?? [];
+    }
+    return;
+  }
+  view.mode = "item";
+  const why = sys.why[`${ref.kind}:${ref.key}`];
+  view.whyVariable = why?.variable ?? "";
+  view.whyEvidence = why?.evidence ?? "";
+  view.whyConfidence = why && why.confidence !== null ? `${Math.round(why.confidence * 100)} %` : "";
+  view.whyReason = why?.reason ?? "";
+  view.kind = ref.kind;
+  view.key = ref.key;
+  view.title = KIND_LABEL[ref.kind];
+  view.removable = removable(ref, doc);
+  view.ordered = ref.kind !== "breakpoint" && ref.kind !== "block" && ref.kind !== "fontRole";
+  view.where = `${sectionLabel(SECTION_OF[ref.kind])} · ${KIND_LABEL[ref.kind]}`;
+  view.token = ref.key;
+  view.families = Object.keys(sys.faces)
+    .sort((a, b) => a.localeCompare(b))
+    .map((f) => ({ value: f, label: f }));
+  if (ref.kind === "color" || ref.kind === "spacing" || ref.kind === "radius" || ref.kind === "shadow") {
+    const token = s.tokens.find((t) => t.name === ref.key);
+    const value = token ? resolveValue(s, token.value) : "";
+    view.name = tokenLabel(ref.key);
+    view.value = ref.kind === "spacing" || ref.kind === "radius" ? px(value) : value;
+    view.users = semanticRoles(s)
+      .filter((r) => rolePalette(s, r.key) === ref.key)
+      .map((r) => r.label)
+      .join(", ");
+    if (ref.kind === "color" && !dragging && followed !== `${ref.key}|${value}`) {
+      followed = `${ref.key}|${value}`;
+      hsvOf(value);
+    }
+  } else if (ref.kind === "font") {
+    const token = s.tokens.find((t) => t.name === ref.key);
+    const family = token ? fontLabel(s, token) : "";
+    const faces = sys.faces[family] ?? [];
+    view.family = family;
+    view.fallback = s.fonts.find((f) => f.token === ref.key)?.fallback ?? "sans-serif";
+    view.missing = !faces.length;
+    view.faces = faces.length ? `${Publr.t("Faces here")}: ${faces.map((f) => `${f[0]} ${f[1]}`).join(", ")}` : Publr.t("This family is not on this computer: text falls back.");
+  } else if (ref.kind === "fontRole") {
+    view.name = fontRoles(s).find((r) => r.token === ref.key)?.label ?? ref.key;
+    view.family = familyOf(s, ref.key);
+    view.fontTokens = fonts(s).map((t) => ({ value: t.name, label: fontLabel(s, t) }));
+  } else if (ref.kind === "role") {
+    const role = semanticRoles(s).find((r) => r.key === ref.key);
+    const current = rolePalette(s, ref.key);
+    const c = role ? cssColor(roleColor(s, role)) : null;
+    view.name = role?.label ?? "";
+    view.description = role?.description ?? "";
+    view.current = current;
+    view.token = `color-${ref.key}`;
+    const ctxs = colorContexts(s);
+    if (!ctxs.some((x) => x.key === roleContext.key)) roleContext.key = "default";
+    view.context = roleContext.key;
+    view.contexts = ctxs.map((x) => {
+      const target = x.key === "default" ? current : rolePaletteIn(s, ref.key, x.key);
+      const cc = cssColor(resolveValue(s, x.key === "default" ? (role ? roleColor(s, role) : "") : (s.tokens.find((t) => t.name === roleToken(x.key, ref.key))?.value ?? "")));
+      return { key: x.key, label: x.label, colour: target ? tokenLabel(target) : cc ? toHex(cc).toUpperCase() : "—", hex: cc ? toHex(cc) : "transparent" };
+    });
+    view.current = view.context === "default" ? current : rolePaletteIn(s, ref.key, view.context);
+    view.colorLabel = `${Publr.t("Colour")}: ${current ? tokenLabel(current) : c ? toHex(c).toUpperCase() : ""}`;
+    view.palette = scaleTokens(s, "color").map((t) => {
+      const tc = cssColor(resolveValue(s, t.value));
+      return { name: t.name, label: tokenLabel(t.name), hex: tc ? toHex(tc) : "transparent" };
+    });
+  } else if (ref.kind === "type") {
+    const e = s.typeScale.find((x) => x.key === ref.key);
+    if (!e) return;
+    const family = entryFamily(s, e);
+    view.name = e.label;
+    view.description = e.description;
+    view.roles = [...fontRoles(s).map((r) => ({ value: r.key, label: `${r.label} · ${familyOf(s, r.token)}` })), ...fonts(s).map((t) => ({ value: t.name.slice(5), label: fontLabel(s, t) }))];
+    view.roleLabel = view.roles.find((r) => r.value === e.fontRole)?.label ?? e.fontRole;
+    const faces = sys.faces[family] ?? [];
+    view.weights = faces.length ? faces.map((f) => ({ value: String(f[0]), label: `${f[0]} ${f[1]}` })) : [400, 500, 600, 700].map((w) => ({ value: String(w), label: String(w) }));
+    view.weightLabel = view.weights.find((w) => w.value === String(e.weight))?.label ?? String(e.weight);
+    view.size = px(e.size);
+    view.lineHeight = e.lineHeight ? px(e.lineHeight) : "Auto";
+    view.letterSpacing = e.letterSpacing ? px(e.letterSpacing) : "0";
+    view.caseLabel = TRANSFORMS.find((t) => t.value === e.textTransform)?.label ?? "None";
+    view.token = `${family} ${e.weight}`;
+  } else if (ref.kind === "breakpoint") {
+    const bp = styleBreakpoints(s).find((b) => b.key === ref.key);
+    if (!bp) return;
+    view.name = `${bp.label} · ${bp.token}`;
+    view.width = px(bp.viewport);
+    const device = breakpointDevice(s, ref.key);
+    view.device = DEVICES.find((d) => d.value === device)?.label ?? device;
+    view.base = ref.key === "base";
+  } else if (ref.kind === "container") {
+    const c = containers(s).find((x) => x.key === ref.key);
+    if (!c) return;
+    view.name = c.label;
+    view.width = px(c.maxWidth);
+    view.padding = px(c.padding.base ?? "");
+  } else if (ref.kind === "icon") {
+    const icon = s.icons.find((i) => i.name === ref.key);
+    if (!icon) return;
+    view.name = `${icon.label} · ${icon.name} · ${icon.category}`;
+    view.image = iconImage(icon.svg);
+  } else if (ref.kind === "block") {
+    const block = sys.blocks.find((b) => b.type === ref.key);
+    const prim = doc.primitives[ref.key];
+    view.name = `${block?.label ?? ref.key} · ${block?.category ?? ""}`;
+    view.value = prim ? `${Publr.t("Default")}: ${prim.name}` : Publr.t("Default: the block's starter. Drag a component here, or select one in the reference and right-click, Set as primitive default.");
+  }
+}
+
+Publr.effect(() => {
+  void sys.doc;
+  void sys.why;
+  void sys.selected;
+  void sys.selectedSection;
+  void sys.faces;
+  Publr.untrack(() => refreshView());
+});
+
+// ------------------------------------------------------------ edits
+
+const sel = (): ItemRef => ({ kind: view.kind as ItemKind, key: view.key });
+
+function rename(label: string): void {
+  const doc = currentDoc();
+  if (!doc || !label.trim()) return;
+  const ref = sel();
+  const to = freeTokenName(doc.system, TOKEN_PREFIX[ref.kind as "color"], label);
+  if (to === ref.key) return;
+  change({ ...doc, system: renameToken(doc.system, ref.key, to) }, { kind: ref.kind, key: to });
+}
+
+const setStyle = (patch: Partial<TypeScaleEntry>) => changeSystem((x) => updateStyle(x, view.key, patch), sel());
+const typeNumber = (key: "size" | "lineHeight" | "letterSpacing", v: number, phase: string) => phased(phase, () => setStyle({ [key]: `${Math.round(v * 100) / 100}px` }));
+
+// ------------------------------------------------------------ the panes
+
+function Label({ text }: { text: string }) {
+  return <div class="text-[11px] text-[var(--pd-text-2)]">{text}</div>;
+}
+
+function TokenPane() {
+  return (
+    <Section title={view.title}>
+      <Label text={Publr.t("Name")} />
+      <Field text wide value={view.name} name="system-name" onText={(t: string) => rename(t)} />
+      <Label text={`${Publr.t("Token")}: ${view.token}`} />
+      {view.kind === "color" && (
+        <div class="flex flex-col gap-2">
+          <Field text wide label="#" value={picker.hex} name="system-hex" onText={(t: string) => typedHex(t)} />
+          <div class="rounded-[8px] bg-[#2c2c2c] p-2" data-pd-system-picker>
+            <ColorPicker hue={picker.h} saturation={picker.s} brightness={picker.v} alpha={1} hex={picker.hex} onPick={(e: CustomEvent<{ hue: number; saturation: number; brightness: number; alpha: number; phase: string }>) => pickColor(e.detail)} onHex={(e: CustomEvent<string>) => typedHex(e.detail)}>
+              <span></span>
+            </ColorPicker>
+          </div>
+          {view.users && <Label text={`${Publr.t("Used by")}: ${view.users}`} />}
+        </div>
+      )}
+      {(view.kind === "spacing" || view.kind === "radius") && (
+        <Field label={view.kind === "radius" ? "R" : "S"} value={view.value} suffix="px" name="system-value" onValue={(v: number, phase: string) => phased(phase, () => changeSystem((x) => setValue(x, view.key, `${Math.max(0, Math.round(v * 100) / 100)}px`), sel()))} />
+      )}
+      {view.kind === "shadow" && <Field text wide value={view.value} name="system-value" onText={(t: string) => changeSystem((x) => setValue(x, view.key, t.trim()), sel())} />}
+    </Section>
+  );
+}
+
+function FontPane() {
+  return (
+    <Section title={Publr.t("Font")}>
+      <Label text={Publr.t("Family")} />
+      <Choice label={Publr.t("Family")} value={view.family} items={view.families} search missing={view.missing} width={220} name="system-family" onPick={(v: string) => changeSystem((x) => setFontFamily(x, view.key, v, view.fallback as "serif"), sel())} />
+      <Label text={Publr.t("Fallback")} />
+      <Choice label={Publr.t("Fallback")} value={view.fallback} items={FALLBACKS} name="system-fallback" onPick={(v: string) => changeSystem((x) => setFontFamily(x, view.key, view.family, v as "serif"), sel())} />
+      <Label text={view.faces} />
+      <Label text={`${Publr.t("Token")}: ${view.token}`} />
+    </Section>
+  );
+}
+
+function FontRolePane() {
+  return (
+    <Section title={Publr.t("Font role")}>
+      <Label text={view.name} />
+      <Choice label={Publr.t("Family")} value={view.family} items={view.fontTokens} name="system-role-family" onPick={(v: string) => changeSystem((x) => setFontRole(x, view.key, v), sel())} />
+      <Label text={`${Publr.t("Token")}: ${view.token}`} />
+    </Section>
+  );
+}
+
+function RolePane() {
+  return (
+    <Section title={Publr.t("Semantic colour")}>
+      <Label text={Publr.t("Name")} />
+      <Field text wide value={view.name} name="system-role-label" onText={(t: string) => changeSystem((x) => updateRole(x, view.key, "label", t), sel())} />
+      <Label text={Publr.t("Description")} />
+      <Field text wide value={view.description} name="system-role-description" onText={(t: string) => changeSystem((x) => updateRole(x, view.key, "description", t), sel())} />
+      {view.contexts.length > 1 ? (
+        <div class="flex flex-col gap-1" data-pd-role-contexts>
+          {view.contexts.map((x) => (
+            <button
+              key={x.key}
+              type="button"
+              class={["flex h-7 items-center gap-2 rounded-[5px] px-1.5 text-left", x.key === view.context ? "bg-[var(--pd-select)]" : "hover:bg-[var(--pd-bg-2)]"]}
+              data-pd-role-context={x.key}
+              onClick={() => {
+                roleContext.key = x.key;
+                refreshView();
+              }}
+            >
+              <span class="h-4 w-4 shrink-0 rounded-[4px] border border-black/10" style={`background:${x.hex}`}></span>
+              <span class="min-w-0 flex-1 truncate">{x.label}</span>
+              <span class="truncate text-[var(--pd-text-2)]">{x.colour}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <Label text={view.colorLabel} />
+      )}
+      <div class="flex flex-wrap gap-1.5" data-pd-system-palette>
+        {view.palette.map((p) => (
+          <button
+            key={p.name}
+            type="button"
+            title={p.label}
+            class={["h-6 w-6 rounded-[5px] border", p.name === view.current ? "border-[var(--pd-brand)] outline outline-2 outline-[var(--pd-brand)]" : "border-black/10"]}
+            style={`background:${p.hex}`}
+            data-pd-palette-pick={p.name}
+            onClick={() => changeSystem((x) => setRoleColor(x, view.key, `var(--${p.name})`, view.context), sel())}
+          ></button>
+        ))}
+      </div>
+      <Label text={`${Publr.t("Token")}: ${view.token}`} />
+    </Section>
+  );
+}
+
+function TypePane() {
+  return (
+    <Section title={Publr.t("Type style")}>
+      <Label text={Publr.t("Name")} />
+      <Field text wide value={view.name} name="system-type-label" onText={(t: string) => t.trim() && setStyle({ label: t.trim() })} />
+      <Label text={Publr.t("Font")} />
+      <Choice label={Publr.t("Font role")} value={view.roleLabel} items={view.roles} width={240} name="system-type-role" onPick={(v: string) => setStyle({ fontRole: v })} />
+      <div class="grid grid-cols-2 gap-2">
+        <Choice label={Publr.t("Weight")} value={view.weightLabel} items={view.weights} name="system-type-weight" onPick={(v: string) => setStyle({ weight: Number(v) })} />
+        <Field label="S" value={view.size} suffix="px" title={Publr.t("Size")} name="system-type-size" onValue={(v: number, phase: string) => typeNumber("size", Math.max(1, v), phase)} />
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <Field label="LH" value={view.lineHeight} title={Publr.t("Line height")} name="system-type-lh" onValue={(v: number, phase: string) => typeNumber("lineHeight", Math.max(0, v), phase)} />
+        <Field label="LS" value={view.letterSpacing} title={Publr.t("Letter spacing")} name="system-type-ls" onValue={(v: number, phase: string) => typeNumber("letterSpacing", v, phase)} />
+      </div>
+      <Label text={Publr.t("Case")} />
+      <Choice label={Publr.t("Case")} value={view.caseLabel} items={TRANSFORMS} name="system-type-case" onPick={(v: string) => setStyle({ textTransform: v as TypeScaleEntry["textTransform"] })} />
+      <Label text={Publr.t("Description")} />
+      <Field text wide value={view.description} name="system-type-description" onText={(t: string) => setStyle({ description: t })} />
+    </Section>
+  );
+}
+
+function BreakpointPane() {
+  return (
+    <Section title={Publr.t("Breakpoint")}>
+      <Label text={view.name} />
+      <div class="grid grid-cols-2 gap-2">
+        <Field label="W" value={view.width} suffix="px" title={Publr.t("Width")} name="system-bp-width" onValue={(v: number, phase: string) => phased(phase, () => changeSystem((x) => setBreakpointWidth(x, view.key, Math.max(1, v)), sel()))} />
+        <Choice label={Publr.t("Device")} value={view.device} items={DEVICES} disabled={view.base} name="system-bp-device" onPick={(v: string) => changeSystem((x) => moveBreakpoint(x, view.key, v as Device), sel())} />
+      </div>
+      {view.base && <Label text={Publr.t("The base is the phone: everything below the next breakpoint.")} />}
+    </Section>
+  );
+}
+
+function ContainerPane() {
+  return (
+    <Section title={Publr.t("Container")}>
+      <Label text={Publr.t("Name")} />
+      <Field text wide value={view.name} name="system-container-label" onText={(t: string) => changeSystem((x) => renameContainer(x, view.key, t), sel())} />
+      <div class="grid grid-cols-2 gap-2">
+        <Field label="W" value={view.width} suffix="px" title={Publr.t("Max width")} name="system-container-width" onValue={(v: number, phase: string) => phased(phase, () => changeSystem((x) => setContainerWidth(x, view.key, `${Math.max(1, Math.round(v))}px`), sel()))} />
+        <Field label="P" value={view.padding} suffix="px" title={Publr.t("Padding")} name="system-container-padding" onValue={(v: number, phase: string) => phased(phase, () => changeSystem((x) => setContainerProp(x, view.key, "padding", "base", `${Math.max(0, Math.round(v))}`), sel()))} />
+      </div>
+    </Section>
+  );
+}
+
+function IconPane() {
+  return (
+    <Section title={Publr.t("Icon")}>
+      <Label text={view.name} />
+      <div class="flex h-24 items-center justify-center rounded-[8px] bg-[var(--pd-bg-2)]">
+        <img src={view.image} alt={view.name} class="h-12 w-12" />
+      </div>
+    </Section>
+  );
+}
+
+function BlockPane() {
+  return (
+    <Section title={Publr.t("Primitive block")}>
+      <Label text={view.name} />
+      <Label text={view.value} />
+    </Section>
+  );
+}
+
+/** Why this token: Bring in's evidence for it (the variable it came from, what binds
+ * it, how sure, and why), never drawn on the canvas. */
+function WhyPane() {
+  return (
+    <Section title={Publr.t("Why this token")} name="system-why">
+      {view.whyVariable && (
+        <div class="flex flex-col gap-0.5" data-pd-why="variable">
+          <span class="text-[var(--pd-text-2)]">{Publr.t("Variable")}</span>
+          <span class="break-words whitespace-pre-line">{view.whyVariable}</span>
+        </div>
+      )}
+      {view.whyEvidence && (
+        <div class="flex flex-col gap-0.5" data-pd-why="evidence">
+          <span class="text-[var(--pd-text-2)]">{Publr.t("Evidence")}</span>
+          <span class="leading-4 break-words">{view.whyEvidence}</span>
+        </div>
+      )}
+      {view.whyConfidence && (
+        <div class="flex items-center gap-2" data-pd-why="confidence">
+          <span class="text-[var(--pd-text-2)]">{Publr.t("Confidence")}</span>
+          <span>{view.whyConfidence}</span>
+        </div>
+      )}
+      {view.whyReason && (
+        <div class="flex flex-col gap-0.5" data-pd-why="reason">
+          <span class="text-[var(--pd-text-2)]">{Publr.t("Reason")}</span>
+          <span class="leading-4 break-words">{view.whyReason}</span>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function ItemPane() {
+  return (
+    <div data-pd-system-item={`${view.kind}:${view.key}`}>
+      {(view.kind === "color" || view.kind === "spacing" || view.kind === "radius" || view.kind === "shadow") && <TokenPane />}
+      {view.kind === "font" && <FontPane />}
+      {view.kind === "fontRole" && <FontRolePane />}
+      {view.kind === "role" && <RolePane />}
+      {view.kind === "type" && <TypePane />}
+      {view.kind === "breakpoint" && <BreakpointPane />}
+      {view.kind === "container" && <ContainerPane />}
+      {view.kind === "icon" && <IconPane />}
+      {view.kind === "block" && <BlockPane />}
+      {(view.whyEvidence || view.whyReason) && <WhyPane />}
+      <Section
+        title={Publr.t("Item")}
+        actions={
+          <div class="flex">
+            {view.ordered && <IconButton icon="back" title={Publr.t("Move earlier (←)")} onClick={() => nudge(sel(), -1)} />}
+            {view.ordered && <IconButton icon="chevron-right" title={Publr.t("Move later (→)")} onClick={() => nudge(sel(), 1)} />}
+            {view.removable && <IconButton icon="trash" title={Publr.t("Remove (Delete)")} onClick={() => removeItem(sel())} />}
+          </div>
+        }
+      >
+        <Label text={view.where} />
+      </Section>
+    </div>
+  );
+}
+
+function SectionPane() {
+  return (
+    <Section title={view.title}>
+      <Label text={view.note} />
+      <Label text={view.count} />
+      {view.adds.map((a) => (
+        <button key={a.kind} type="button" class="h-6 rounded-[5px] bg-[var(--pd-bg-2)] px-2 text-left text-[11px] hover:outline hover:outline-1 hover:outline-[var(--pd-border)]" data-pd-system-add={a.kind} onClick={() => addFromChip(a.kind)}>
+          + {Publr.t(a.label)}
+        </button>
+      ))}
+    </Section>
+  );
+}
+
+function Summary() {
+  return (
+    <div>
+      {view.groups.map((g) => (
+        <Section key={g.key} title={g.label} body="flex flex-col gap-1 pt-1 pr-2 pb-3 pl-4">
+          {g.rows.map((x) => (
+            <div key={x.key} class="flex h-6 items-center text-[11px]">
+              <span class="flex-1">{x.label}</span>
+              <span class="text-[var(--pd-text-2)]">{x.count}</span>
+            </div>
+          ))}
+        </Section>
+      ))}
+      <div class="px-4 py-3 text-[11px] leading-4 text-[var(--pd-text-2)]">{Publr.t("Click an item on the canvas to edit it. Choose a reference file in the bottom right corner, then drag a colour or a text from it onto a section to add it, or select some there and right-click.")}</div>
+    </div>
+  );
+}
+
+export function ItemPanel() {
+  return (
+    <aside data-pd-right data-pd-system-right class="flex h-full w-[241px] shrink-0 flex-col border-l border-[var(--pd-border)] bg-[var(--pd-bg)] text-[11px] text-[var(--pd-text)]">
+      <div class="flex h-[46px] shrink-0 items-center border-b border-[var(--pd-border)] px-4">
+        <span class="min-w-0 flex-1 truncate text-[11px] font-[550]">{view.title}</span>
+      </div>
+      <div data-pd-scroll class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        {view.mode === "item" ? <ItemPane /> : view.mode === "section" ? <SectionPane /> : <Summary />}
+      </div>
+    </aside>
+  );
+}

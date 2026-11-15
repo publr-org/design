@@ -1,0 +1,149 @@
+// `pe serve`'s page: how close our render is to Figma's export, for every reference.
+// The sidebar lists the exports by frame; the top bar names the selected one with its
+// numbers, the modes and the zooms; the panes compare; the build-up bar steps through
+// our render node by node; the foot reads the pixels under the pointer. The chrome
+// renders store values only; data.ts, view.ts and buildup.ts write the store.
+import { Button } from "../../../ui/src/components/Button/Button.ptsx";
+import { Icon } from "../../../ui/src/components/Icon/Icon.ptsx";
+import { Status } from "../../../ui/src/components/Status/Status.ptsx";
+import { Text } from "../../../ui/src/components/Text/Text.ptsx";
+import { Toast } from "../../../ui/src/components/Toast/Toast.ptsx";
+import { nudge, scrub, togglePlay } from "./buildup";
+import { setMode } from "./data";
+import { Frames } from "./Frames.ptsx";
+import { Panes } from "./Panes.ptsx";
+import { MODES, ZOOMS, panesHost, state } from "./store";
+import { zoomPreset } from "./view";
+
+function TopBar() {
+  return (
+    <div data-top class="flex h-10 shrink-0 items-center gap-2.5 border-b border-border bg-card px-3">
+      <Text variant="label-sm-strong" classes="min-w-0 truncate whitespace-pre">
+        <span data-title>{state.title}</span>
+      </Text>
+      <span data-nums class="flex shrink-0 gap-2.5 text-[12px] whitespace-nowrap text-muted-foreground">
+        {!state.scored && <span>scoring...</span>}
+        {state.nums.map((num) => (
+          <span>
+            {num.label} <b class="font-mono text-[11px] font-medium text-foreground">{num.value}</b> {num.unit}
+          </span>
+        ))}
+      </span>
+      <span class="flex-1" />
+      <div data-modes role="group" aria-label="Mode" class="flex shrink-0 gap-0.5">
+        {MODES.map((mode) => (
+          <Button hierarchy="tertiary" size="xs" pressed={state.mode === mode.key} title={mode.shortcut} onClick={() => setMode(mode.key)}>
+            {mode.label}
+          </Button>
+        ))}
+      </div>
+      <div data-zooms role="group" aria-label="Zoom" class="flex shrink-0 gap-0.5">
+        {ZOOMS.map((zoom) => (
+          <Button hierarchy="tertiary" size="xs" pressed={state.zoomKey === zoom.key} title={zoom.key === "fit" ? "f" : ""} onClick={() => zoomPreset(zoom.key)}>
+            {zoom.label}
+          </Button>
+        ))}
+      </div>
+      <Text variant="mono-xs" tone="muted" classes="w-11 shrink-0 text-right">
+        <span data-zoom-label>{state.zoomLabel}</span>
+      </Text>
+      <Icon name="loader" size="sm" classes={state.busy ? "shrink-0 animate-spin text-primary" : "invisible shrink-0"} />
+      <span data-live class="shrink-0">
+        <Status tone={state.live ? "success" : "error"}>{state.live ? "live" : "offline"}</Status>
+      </span>
+    </div>
+  );
+}
+
+function BuildBar() {
+  return (
+    <div data-build class="flex shrink-0 items-center gap-2 border-t border-border bg-card px-3 py-1.5">
+      <Button hierarchy="secondary" size="xs" pressed={state.playing} classes="w-14" onClick={() => togglePlay()}>
+        {state.playing ? "Pause" : "Play"}
+      </Button>
+      <Button hierarchy="secondary" size="xs" title="-10" label="Back 10" onClick={() => nudge(-10)}>
+        «
+      </Button>
+      <Button hierarchy="secondary" size="xs" title="left arrow" label="Back 1" onClick={() => nudge(-1)}>
+        ‹
+      </Button>
+      <input data-scrub type="range" min="0" max={state.nodes} value={state.step} aria-label="Nodes drawn" class="min-w-[120px] flex-1 accent-[#ff3b9a]" onInput={scrub} />
+      <Button hierarchy="secondary" size="xs" title="right arrow" label="Forward 1" onClick={() => nudge(1)}>
+        ›
+      </Button>
+      <Button hierarchy="secondary" size="xs" title="+10" label="Forward 10" onClick={() => nudge(10)}>
+        »
+      </Button>
+      <Text variant="mono-xs" classes="shrink-0">
+        <span data-count>{`${state.step} / ${state.nodes}`}</span>
+      </Text>
+      <span data-step-info class="max-w-[40%] min-w-[260px] truncate text-[12px] text-muted-foreground">
+        {state.stepNote}
+        {state.stepDrawn && (
+          <>
+            {state.stepDrawn} <span class="text-[#ff3b9a]">{state.stepNode}</span> <span class="font-mono text-[11px]">{state.stepWhere}</span>
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function Swatch({ color }: { color: string }) {
+  return <span class="mr-1 inline-block size-2.5 rounded-xs border border-[#444] align-[-1px]" style={{ background: color }} />;
+}
+
+function Foot() {
+  return (
+    <div data-foot class="flex h-7 shrink-0 items-center gap-3.5 overflow-hidden border-t border-border bg-card px-3 text-[12px] whitespace-nowrap text-muted-foreground">
+      <span data-inspect>
+        {state.inspect.state === "idle" && "hover an image to inspect pixels"}
+        {state.inspect.state === "outside" && (
+          <>
+            <span class="font-mono text-[11px]">{state.inspect.at}</span> outside
+          </>
+        )}
+        {state.inspect.state === "pixel" && (
+          <>
+            <b class="font-mono text-[11px] font-medium text-foreground">{state.inspect.at}</b>
+            {"   Reference "}
+            {state.inspect.figma && <Swatch color={state.inspect.figmaColor} />}
+            {state.inspect.figma ? <b class="font-mono text-[11px] font-medium text-foreground">{state.inspect.figma}</b> : "loading"}
+            {"   Ours "}
+            {state.inspect.ours && <Swatch color={state.inspect.oursColor} />}
+            {state.inspect.ours ? <b class="font-mono text-[11px] font-medium text-foreground">{state.inspect.ours}</b> : "loading"}
+            {state.inspect.diff && (
+              <>
+                {"   diff "}
+                <b class={["font-mono text-[11px] font-medium", state.inspect.diffOk ? "text-success" : "text-destructive"]}>{state.inspect.diff}</b>
+              </>
+            )}
+          </>
+        )}
+      </span>
+      <span class="flex-1" />
+      <span>keys: 1-4 modes, space pause/play, f fit, up/down item, left/right step</span>
+    </div>
+  );
+}
+
+export function Dashboard() {
+  return (
+    <div data-dashboard class="flex h-full min-h-0 overflow-hidden bg-background text-[12px] text-foreground">
+      <Frames />
+      <div class="flex min-w-0 flex-1 flex-col">
+        <TopBar />
+        <main class="flex min-h-0 flex-1 flex-col">
+          <div ref={panesHost} data-panes class="flex min-h-0 flex-1 gap-px bg-border">
+            <Panes />
+          </div>
+          {state.mode === "build" && <BuildBar />}
+        </main>
+        <Foot />
+      </div>
+      <div data-toast class={["fixed right-4 bottom-10 z-10 transition duration-200", state.toastShown ? "opacity-100" : "translate-y-1.5 opacity-0"]}>
+        <Toast>{state.toast}</Toast>
+      </div>
+    </div>
+  );
+}

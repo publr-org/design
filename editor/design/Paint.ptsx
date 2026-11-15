@@ -1,0 +1,130 @@
+// A paint of the Fill or Stroke section (and the page's background): the swatch (opens
+// the colour picker), its colour typed as hex (or "Linear", "Image", a style's name),
+// its opacity typed or scrubbed, then show/hide and remove. Rows drag to reorder. A paint
+// bound to a colour variable shows the variable's name (it opens the picker) and the
+// detach button on hover.
+import { evalNumber } from "./Field.ptsx";
+import type { FieldPhase } from "./Field.ptsx";
+import { IconButton } from "./IconButton.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+
+export type PaintProps = {
+  swatch: string;
+  label: string;
+  opacity: string;
+  visible: boolean;
+  style: boolean;
+  /** A solid: the label is its hex and can be typed. */
+  solid?: boolean;
+  /** No eye or remove (the page's background). */
+  bare?: boolean;
+  name?: string;
+  onSwatch?: (el: HTMLElement) => void;
+  onHex?: (text: string) => void;
+  onOpacity?: (v: number, phase: FieldPhase) => void;
+  onToggle?: () => void;
+  onRemove?: () => void;
+  onDragStart?: () => void;
+  onDrop?: () => void;
+  /** Bound to a colour variable: its name (a pill in place of the hex). */
+  variable?: string;
+  /** The pill pressed: the variable picker beside `el`. */
+  onVariable?: (el: HTMLElement) => void;
+  onDetach?: () => void;
+};
+
+function key(event: KeyboardEvent, value: string): void {
+  const input = event.currentTarget as HTMLInputElement;
+  if (event.key === "Enter") input.blur();
+  if (event.key === "Escape") {
+    input.value = value;
+    input.blur();
+  }
+}
+
+function blurHex(event: Event, value: string, on?: (t: string) => void): void {
+  const input = event.currentTarget as HTMLInputElement;
+  if (input.value !== value) on?.(input.value);
+  requestAnimationFrame(() => (input.value = input.dataset.value ?? value));
+}
+
+function blurOpacity(event: Event, value: string, on?: (v: number, phase: FieldPhase) => void): void {
+  const input = event.currentTarget as HTMLInputElement;
+  if (input.value !== value) {
+    const v = evalNumber(input.value);
+    if (Number.isFinite(v)) on?.(v, "set");
+  }
+  requestAnimationFrame(() => (input.value = input.dataset.value ?? value));
+}
+
+export function Paint({ swatch, label, opacity, visible, style, solid = false, bare = false, name = "", onSwatch, onHex, onOpacity, onToggle, onRemove, onDragStart, onDrop, variable = "", onVariable, onDetach }: PaintProps) {
+  return (
+    <div
+      class={bare ? "grid grid-cols-[184px_24px] items-center gap-x-2" : "grid grid-cols-[156px_24px_24px] items-center gap-x-1"}
+      data-pd-paint={name || label}
+      draggable={!!onDragStart}
+      onDragStart={(event: DragEvent) => {
+        if ((event.target as HTMLElement).tagName === "INPUT") return;
+        onDragStart?.();
+      }}
+      onDragOver={(event: DragEvent) => event.preventDefault()}
+      onDrop={(event: DragEvent) => {
+        event.preventDefault();
+        onDrop?.();
+      }}
+    >
+      <div class={["group/paint flex h-6 min-w-0 items-center rounded-[5px] bg-[var(--pd-bg-2)] outline outline-1 -outline-offset-1 outline-transparent hover:outline-[var(--pd-border)] focus-within:outline-[var(--pd-brand)]", visible ? "" : "opacity-40"]}>
+        <button type="button" class="flex h-6 w-6 shrink-0 items-center justify-center" title="Colour" data-pd-swatch onClick={(event: MouseEvent) => onSwatch?.(event.currentTarget as HTMLElement)}>
+          <span class="block h-[14px] w-[14px] rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,0.1)]" style={{ background: swatch }}></span>
+        </button>
+        {variable ? (
+          <span class="flex h-6 min-w-0 flex-1 items-center pr-0.5 pl-0.5">
+            <button type="button" class="min-w-0 max-w-full truncate text-left text-[11px] text-[var(--pd-text)]" title={variable} data-pd-paint-var={variable} onClick={(event: MouseEvent) => onVariable?.(event.currentTarget as HTMLElement)}>
+              {variable}
+            </button>
+            <span class="flex-1"></span>
+            {onDetach && (
+              <button type="button" class="hidden h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[var(--pd-icon)] group-hover/paint:flex" title="Detach variable" data-pd-paint-detach onClick={() => onDetach()}>
+                <PdIcon name="detach" />
+              </button>
+            )}
+          </span>
+        ) : solid && onHex ? (
+          <input
+            class="h-6 min-w-0 flex-1 bg-transparent pl-0.5 text-[11px] uppercase text-[var(--pd-text)] outline-none"
+            value={label}
+            data-value={label}
+            spellcheck={false}
+            data-pd-hex
+            onFocus={(event: Event) => (event.currentTarget as HTMLInputElement).select()}
+            onKeyDown={(event: KeyboardEvent) => key(event, label)}
+            onBlur={(event: Event) => blurHex(event, label, onHex)}
+          />
+        ) : (
+          <button type="button" class="min-w-0 flex-1 truncate pl-0.5 text-left text-[11px] text-[var(--pd-text)]" onClick={(event: MouseEvent) => onSwatch?.((event.currentTarget as HTMLElement).previousElementSibling as HTMLElement)}>
+            {label}
+          </button>
+        )}
+        {!style && !variable && (
+          <span class="flex h-6 w-[54px] shrink-0 items-center border-l border-[var(--pd-bg)] pl-2 text-[11px] text-[var(--pd-text)]">
+            <input
+              class="h-6 w-full min-w-0 bg-transparent outline-none"
+              value={opacity}
+              data-value={opacity}
+              spellcheck={false}
+              data-pd-paint-opacity
+              disabled={!onOpacity}
+              onFocus={(event: Event) => (event.currentTarget as HTMLInputElement).select()}
+              onKeyDown={(event: KeyboardEvent) => key(event, opacity)}
+              onBlur={(event: Event) => blurOpacity(event, opacity, onOpacity)}
+            />
+            <span class="ml-auto pr-2 text-[var(--pd-text-2)]">%</span>
+          </span>
+        )}
+      </div>
+      {!bare && <IconButton icon={visible ? "eye" : "eye-off"} title={visible ? "Hide" : "Show"} classes="ml-1" onClick={() => onToggle?.()} />}
+      {!bare && <IconButton icon="minus" title="Remove" onClick={() => onRemove?.()} />}
+      {bare && <IconButton icon={visible ? "eye" : "eye-off"} title="Show in exports" />}
+    </div>
+  );
+}

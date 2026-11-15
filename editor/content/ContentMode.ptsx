@@ -1,0 +1,832 @@
+// Content mode: a site's page edited in place, laid out as the block editor is
+// (publrv2/editor, shell/Shell.ptsx): the top bar (the Publr mark, the inserter, undo and
+// redo, the list view; the breakpoint switcher in the middle; the settings sidebar,
+// preview and the options on the right), the left panel (the inserter's Blocks, Patterns
+// and Media, or the document overview's List View, Outline and Patterns), the canvas with
+// the block toolbar over the selection and the breadcrumb under it, the wire output, and
+// the right sidebar's Document and Block tabs. Drawn in PublrDesign's style: its tokens
+// and themes (design/shell.css), its type, row heights, controls and icons; the canvas
+// is PublrDesign's too (canvas.ts): the page on a canvas that pans and zooms, the overlay
+// marking hover and selection.
+import { Publr } from "publr-jsx";
+import { Icon } from "../../../ui/src/components/Icon/Icon.ptsx";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { navigate, route } from "../app/route";
+import { Field } from "../design/Field.ptsx";
+import { PdIcon } from "../design/PdIcon.ptsx";
+import { installIcons } from "../design/icons";
+import { setTheme, shell } from "../design/store";
+import {
+  attach,
+  back,
+  closeLeft,
+  copyHtml,
+  detach,
+  editKey,
+  filePicked,
+  fileInputRef,
+  fitWidth,
+  format,
+  hoverKey,
+  later,
+  openDoc,
+  pickBreakpoint,
+  pickImage,
+  preview,
+  redo,
+  selectKey,
+  selectPath,
+  selectRow,
+  setAll,
+  setAlt,
+  setDevice,
+  setLink,
+  showDoc,
+  toggleLeft,
+  toggleOutput,
+  toggleRow,
+  toggleFit,
+  toggleSidebar,
+  undo,
+  zoom100,
+  zoomBy,
+  zoomTo,
+} from "./actions";
+import { GROUPS, breakpointAt, deviceOf } from "./breakpoints";
+import type { Format } from "./frames";
+import { view } from "./store";
+import type { Inspector } from "./store";
+
+export type ContentModeProps = {
+  /** The page the address names. */
+  doc: string;
+};
+
+const canvasHost = Publr.ref((el: HTMLElement | null) => {
+  if (el) void attach(el).then(() => openDoc(route.contentDoc));
+});
+
+type FieldView = Extract<Inspector, { kind: "field" }>;
+type BlockView = Extract<Inspector, { kind: "block" }>;
+type ManyView = Extract<Inspector, { kind: "many" }>;
+const fieldView = () => view.inspector as FieldView;
+const blockView = () => view.inspector as BlockView;
+const manyView = () => view.inspector as ManyView;
+
+const FORMATS: { f: Format; icon: string; label: string; keys: string }[] = [
+  { f: "bold", icon: "bold", label: "Bold", keys: "⌘B" },
+  { f: "italic", icon: "italic", label: "Italic", keys: "⌘I" },
+];
+
+const valueOf = (event: Event) => (event.target as HTMLInputElement).value;
+
+/** Keeps the text being edited focused while a toolbar button is pressed. */
+const keepFocus = (event: MouseEvent) => event.preventDefault();
+
+// ------------------------------------------------------------ small parts, PublrDesign's style
+
+/** A 32 px icon button of the bars (Figma's: the icon, a soft square on hover, blue when on). */
+function BarButton({ title, on = false, disabled = false, primary = false, name = "", onClick, children }: { title: string; on?: boolean; disabled?: boolean; primary?: boolean; name?: string; onClick?: (event: MouseEvent) => void; children?: JSX.Element }) {
+  return (
+    <button
+      type="button"
+      class={[
+        "flex h-8 min-w-8 shrink-0 items-center justify-center rounded-[5px] outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--pd-brand)]",
+        primary ? "bg-[var(--pd-brand)] text-[var(--pd-on-brand)] hover:brightness-110" : on ? "bg-[var(--pd-select)] text-[var(--pd-brand)]" : disabled ? "text-[var(--pd-text-3)]" : "text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]",
+      ]}
+      title={title}
+      aria-label={title}
+      aria-pressed={on}
+      disabled={disabled}
+      data-pd-bar={name}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** A panel's tab (Figma's: 24 px, the selected one on the second colour). */
+function Tab({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      class={["h-6 rounded-[5px] px-2 text-[11px] font-[550]", selected ? "bg-[var(--pd-bg-2)] text-[var(--pd-text)]" : "text-[var(--pd-text-2)] hover:text-[var(--pd-text)]"]}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** A section title in the panels (11 px, 550, 40 px row). */
+function Title({ children, actions }: { children?: JSX.Element; actions?: JSX.Element }) {
+  return (
+    <header class="flex h-10 items-center pr-2 pl-4">
+      <h3 class="min-w-0 flex-1 truncate text-[11px] font-[550] text-[var(--pd-text)]">{children}</h3>
+      {actions}
+    </header>
+  );
+}
+
+// ------------------------------------------------------------ the top bar
+
+function MarkMenu() {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger classes="flex h-8 w-8 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-select)]" data-pd-main-menu>
+        <PdIcon name="mark" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent size="xs" classes="max-h-[70vh] w-[260px] overflow-y-auto">
+        <DropdownMenuItem size="xs" onClick={() => navigate("/")}>
+          <span class="flex-1">{Publr.t("Back to files")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator size="xs" />
+        {view.docs.map((d, i) => (
+          <div key={d.key}>
+            {(i === 0 || view.docs[i - 1].group !== d.group) && <div class="px-2 pt-2 pb-1 text-[11px] text-[var(--pd-menu-text-2)]">{d.group}</div>}
+            <DropdownMenuItem size="xs" onClick={() => showDoc(d.key)}>
+              <span class="w-4">{d.key === view.docKey ? "✓" : ""}</span>
+              <span class="flex-1 truncate">{d.title}</span>
+            </DropdownMenuItem>
+          </div>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function OptionsMenu() {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger classes="flex h-8 w-8 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-select)]" data-pd-options>
+        <Icon name="more" size="sm" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="right" size="xs" classes="w-[220px]">
+        <div class="px-2 pt-1 pb-1 text-[11px] text-[var(--pd-menu-text-2)]">{Publr.t("Tools")}</div>
+        <DropdownMenuItem size="xs" onClick={() => toggleOutput()}>
+          <span class="flex-1">{view.output ? Publr.t("Hide wire output") : Publr.t("Show wire output")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => void copyHtml("editing")}>
+          <span class="flex-1">{Publr.t("Copy editing HTML")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => void copyHtml("data")}>
+          <span class="flex-1">{Publr.t("Copy data HTML")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator size="xs" />
+        <DropdownMenuItem size="xs" onClick={() => setTheme(shell.dark ? "light" : "dark")}>
+          <span class="w-4">{shell.dark ? "" : "✓"}</span>
+          <span class="flex-1">{Publr.t("Light mode")}</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ZoomMenu() {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger classes="flex h-8 items-center rounded-[5px] pr-0.5 pl-2 text-[11px] text-[var(--pd-text)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-select)] aria-expanded:text-[var(--pd-brand)]">
+        <span data-pd-zoom class="tabular-nums">{view.zoomLabel}</span>
+        <PdIcon name="chevron-down" size={20} classes="-ml-0.5" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="right" size="xs" classes="w-[200px]">
+        <DropdownMenuItem size="xs" onClick={() => zoomBy(2)}>
+          <span class="flex-1">{Publr.t("Zoom in")}</span>
+          <span class="opacity-60">⌘+</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => zoomBy(0.5)}>
+          <span class="flex-1">{Publr.t("Zoom out")}</span>
+          <span class="opacity-60">⌘−</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => fitWidth()}>
+          <span class="flex-1">{Publr.t("Zoom to fit width")}</span>
+          <span class="opacity-60">⇧1</span>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator size="xs" />
+        <DropdownMenuItem size="xs" onClick={() => zoomTo(0.5)}>
+          <span class="flex-1">{Publr.t("Zoom to 50%")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => zoom100()}>
+          <span class="flex-1">{Publr.t("Zoom to 100%")}</span>
+          <span class="opacity-60">⇧0</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem size="xs" onClick={() => zoomTo(2)}>
+          <span class="flex-1">{Publr.t("Zoom to 200%")}</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** The breakpoint switcher: each breakpoint alone (the picked one again: free
+ * responsive mode, where the buttons only hint at the breakpoint the width falls in),
+ * Fit (a mode: the camera held, the frames across the canvas), all side by side. */
+function Breakpoints() {
+  return (
+    <div class="flex h-8 items-center gap-0.5 rounded-[8px] bg-[var(--pd-toolbar-group)] p-0.5" role="group" aria-label={Publr.t("Canvas viewport")} data-pd-breakpoints>
+      {GROUPS.map((g) => (
+        <div key={g.device} class="flex items-center" data-pd-device-group={g.device}>
+          <button
+            type="button"
+            class={[
+              "flex h-7 items-center gap-1 rounded-[6px] px-1.5 text-[11px]",
+              !view.all && g.breakpoints.some((b) => b.key === view.device)
+                ? "bg-[var(--pd-toolbar-active)] text-[var(--pd-brand)] shadow-[0_0_0_0.5px_rgba(0,0,0,0.12)]"
+                : !view.all && view.device === "" && breakpointAt(view.freeWidth).device === g.device
+                  ? // A hint, not a choice: a grey a step off the group's, never the accent.
+                    "bg-[color-mix(in_srgb,var(--pd-text)_10%,transparent)] text-[var(--pd-text)]"
+                  : "text-[var(--pd-text-2)] hover:text-[var(--pd-text)]",
+            ]}
+            title={!view.all && g.breakpoints.some((b) => b.key === view.device) ? `${deviceOf(view.device).label} · ${deviceOf(view.device).range}. ${Publr.t("Click again for any width")}` : g.label}
+            aria-label={g.label}
+            aria-pressed={!view.all && g.breakpoints.some((b) => b.key === view.device)}
+            data-pd-device={g.device}
+            data-pd-hint={!view.all && view.device === "" && breakpointAt(view.freeWidth).device === g.device ? "" : undefined}
+            onClick={() => setDevice(g.device)}
+          >
+            <Icon name={g.icon as never} size="sm" />
+            {!view.all && g.breakpoints.some((b) => b.key === view.device) && <span class="tabular-nums">{deviceOf(view.device).width}px</span>}
+            {!view.all && view.device === "" && breakpointAt(view.freeWidth).device === g.device && (
+              <span class="tabular-nums" data-pd-free-width>
+                {view.freeWidth}px
+              </span>
+            )}
+          </button>
+          {g.breakpoints.length > 1 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger classes="-ml-0.5 flex h-7 w-[17px] items-center justify-center rounded-[5px] text-[var(--pd-text-2)] hover:text-[var(--pd-text)] aria-expanded:bg-[var(--pd-select)] aria-expanded:text-[var(--pd-brand)]" data-pd-device-menu={g.device}>
+                <PdIcon name="chevron-down" size={20} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent size="xs" classes="w-[260px]">
+                <div class="px-2 pt-1 pb-1 text-[11px] text-[var(--pd-menu-text-2)]">{g.label}</div>
+                {g.breakpoints.map((b) => (
+                  <DropdownMenuItem key={b.key} size="xs" onClick={() => pickBreakpoint(b.key as never)}>
+                    <span class="w-4">{!view.all && view.device === b.key ? "✓" : ""}</span>
+                    <span class="flex-1 whitespace-nowrap">{b.label}</span>
+                    {!view.all && view.device === "" && breakpointAt(view.freeWidth).key === b.key && (
+                      <span class="rounded-[4px] bg-[var(--pd-menu-line)] px-1 whitespace-nowrap tabular-nums" title={Publr.t("The free width is in this breakpoint")}>
+                        {view.freeWidth}px
+                      </span>
+                    )}
+                    <span class="whitespace-nowrap tabular-nums opacity-60">{b.range}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      ))}
+      <button
+        type="button"
+        class={["flex h-7 w-7 items-center justify-center rounded-[6px]", view.fit ? "bg-[var(--pd-toolbar-active)] text-[var(--pd-brand)] shadow-[0_0_0_0.5px_rgba(0,0,0,0.12)]" : "text-[var(--pd-text-2)] hover:text-[var(--pd-text)]"]}
+        title={view.fit ? Publr.t("Fit to canvas is on: a zoom or a pan turns it off") : Publr.t("Fit to canvas")}
+        aria-pressed={view.fit}
+        data-pd-device="fit"
+        onClick={() => toggleFit()}
+      >
+        <Icon name="viewport-fit" size="sm" />
+      </button>
+      <button
+        type="button"
+        class={["flex h-7 w-7 items-center justify-center rounded-[6px]", view.all ? "bg-[var(--pd-toolbar-active)] text-[var(--pd-brand)] shadow-[0_0_0_0.5px_rgba(0,0,0,0.12)]" : "text-[var(--pd-text-2)] hover:text-[var(--pd-text)]"]}
+        title={Publr.t("Compare all breakpoints")}
+        aria-pressed={view.all}
+        data-pd-device="all"
+        onClick={() => setAll()}
+      >
+        <Icon name="viewport-compare" size="sm" />
+      </button>
+    </div>
+  );
+}
+
+function TopBar() {
+  return (
+    <header data-topbar class="grid h-12 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-[var(--pd-border)] bg-[var(--pd-bg)] px-2">
+      <div class="flex min-w-0 items-center gap-0.5 justify-self-start">
+        <MarkMenu />
+        <BarButton primary title={Publr.t("Block inserter")} name="inserter" onClick={() => toggleLeft("inserter")}>
+          <Icon name={view.left === "inserter" ? "x-close" : "plus"} size="sm" />
+        </BarButton>
+        <BarButton title={`${Publr.t("Undo")} (⌘Z)`} disabled={!view.canUndo} name="undo" onClick={() => undo()}>
+          <Icon name="undo" size="sm" />
+        </BarButton>
+        <BarButton title={`${Publr.t("Redo")} (⇧⌘Z)`} disabled={!view.canRedo} name="redo" onClick={() => redo()}>
+          <Icon name="redo" size="sm" />
+        </BarButton>
+        <BarButton title={Publr.t("List view")} on={view.left === "list"} name="list" onClick={() => toggleLeft("list")}>
+          <Icon name="list-view" size="sm" />
+        </BarButton>
+        <span class="ml-2 flex min-w-0 flex-col justify-center border-l border-[var(--pd-border)] pl-3 leading-4">
+          <span class="truncate text-[11px] font-[550]" data-pd-file-name>
+            {view.title}
+          </span>
+          <span class="truncate text-[11px] text-[var(--pd-text-2)]" data-pd-location>
+            {view.edits > 0 ? `${view.location} · ${Publr.t("Changes aren't saved")}` : view.location}
+          </span>
+        </span>
+      </div>
+      <Breakpoints />
+      <div class="flex h-full items-center gap-0.5 justify-self-end">
+        <ZoomMenu />
+        <BarButton title={Publr.t("Settings sidebar")} on={view.sidebarOpen} name="sidebar" onClick={() => toggleSidebar()}>
+          <Icon name="sidebar-right" size="sm" />
+        </BarButton>
+        <BarButton title={Publr.t("Preview in new tab")} name="preview" onClick={() => preview()}>
+          <Icon name="external" size="sm" />
+        </BarButton>
+        <OptionsMenu />
+      </div>
+    </header>
+  );
+}
+
+// ------------------------------------------------------------ the left panel
+
+function PanelHead({ children, onClose, label }: { children?: JSX.Element; onClose: () => void; label: string }) {
+  return (
+    <div class="flex h-10 shrink-0 items-center gap-1 border-b border-[var(--pd-border)] pr-2 pl-2">
+      <div class="flex flex-1 gap-1" role="tablist" aria-label={label}>
+        {children}
+      </div>
+      <button type="button" class="flex h-6 w-6 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]" title={Publr.t("Close")} onClick={onClose}>
+        <PdIcon name="close" />
+      </button>
+    </div>
+  );
+}
+
+function BlockLibrary() {
+  return (
+    <div data-panel="blocks" class="min-h-0 flex-1 overflow-y-auto pb-4">
+      <div class="px-4 pt-3">
+        <label class="flex h-7 items-center gap-1 rounded-[5px] bg-[var(--pd-bg-2)] px-1.5 text-[11px] focus-within:outline focus-within:outline-1 focus-within:outline-[var(--pd-brand)]">
+          <PdIcon name="search" size={16} classes="text-[var(--pd-text-2)]" />
+          <input class="min-w-0 flex-1 bg-transparent outline-none" placeholder={Publr.t("Search")} value={view.query} onInput={(event: Event) => (view.query = valueOf(event).trim().toLowerCase())} />
+        </label>
+      </div>
+      {view.shelves.map((shelf) => (
+        <section key={shelf.category} data-shelf={shelf.category}>
+          {shelf.items.some((item) => !view.query || item.label.toLowerCase().includes(view.query)) && <Title>{shelf.label}</Title>}
+          <div class="grid grid-cols-3 gap-1 px-2">
+            {shelf.items
+              .filter((item) => !view.query || item.label.toLowerCase().includes(view.query))
+              .map((item) => (
+                <button type="button" key={item.type} class="flex h-16 flex-col items-center justify-center gap-1.5 rounded-[5px] text-[11px] hover:bg-[var(--pd-bg-2)]" data-pd-insert={item.type} onClick={() => later("Inserting blocks")}>
+                  <Icon name={item.icon as never} size="md" />
+                  <span class="max-w-full truncate px-1">{item.label}</span>
+                </button>
+              ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function PatternsList() {
+  return (
+    <div data-panel="patterns" class="min-h-0 flex-1 overflow-y-auto pb-4">
+      {view.patterns.map((p, i) => (
+        <div key={p.name}>
+          {(i === 0 || view.patterns[i - 1].category !== p.category) && <Title>{p.category}</Title>}
+          <button type="button" class="mx-2 flex w-[calc(100%-16px)] flex-col items-start gap-0.5 rounded-[5px] px-2 py-1.5 text-left hover:bg-[var(--pd-bg-2)]" data-pd-pattern={p.name} onClick={() => later("Inserting patterns")}>
+            <span class="flex items-center gap-1.5 text-[11px] font-[550] text-[var(--pd-component)]">
+              <Icon name="pattern" size="xs" />
+              {p.label}
+            </span>
+            <span class="text-[11px] leading-4 text-[var(--pd-text-2)]">{p.description}</span>
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ListView() {
+  return (
+    <div data-panel="list" class="min-h-0 flex-1 overflow-y-auto py-1">
+      {view.layers.map((row) => (
+        <div key={row.key} class="h-8 px-1" data-pd-layer={row.key} onMouseEnter={() => hoverKey(row.key)} onMouseLeave={() => hoverKey("")}>
+          <div
+            class={[
+              "flex h-8 items-center gap-1 rounded-[5px] pr-2",
+              row.selected ? "bg-[var(--pd-select)]" : row.kind === "part" ? "" : "hover:bg-[var(--pd-bg-2)]",
+              row.kind === "part" ? "text-[var(--pd-text-2)]" : row.kind === "block" && row.icon === "pattern" ? "text-[var(--pd-component)]" : "text-[var(--pd-text)]",
+            ]}
+            style={{ paddingLeft: `${4 + row.depth * 20}px` }}
+          >
+            <button type="button" class="flex h-6 w-4 shrink-0 items-center justify-center text-[var(--pd-text-2)]" tabindex={-1} onClick={() => toggleRow(row.key)}>
+              {row.hasChildren ? <PdIcon name={row.open ? "caret-down" : "chevron-right"} size={16} /> : null}
+            </button>
+            <button type="button" class="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={() => selectRow(row.key)}>
+              <Icon name={row.icon as never} size="sm" classes="shrink-0" />
+              <span class={["shrink-0 truncate", row.kind === "field" ? "" : "font-[450]"]}>{row.label}</span>
+              {row.detail && <span class="min-w-0 truncate text-[var(--pd-text-2)]">{row.detail}</span>}
+              {row.kind === "part" && <Icon name="lock" size="xs" classes="ml-auto shrink-0" />}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Outline() {
+  return (
+    <div data-panel="outline" class="min-h-0 flex-1 overflow-y-auto">
+      <dl class="m-0 grid grid-cols-[auto_1fr] gap-x-8 gap-y-2 border-b border-[var(--pd-border)] px-4 py-3 text-[11px]">
+        <dt class="text-[var(--pd-text-2)]">{Publr.t("Characters:")}</dt>
+        <dd class="m-0">{String(view.outline.characters)}</dd>
+        <dt class="text-[var(--pd-text-2)]">{Publr.t("Words:")}</dt>
+        <dd class="m-0">{String(view.outline.words)}</dd>
+        <dt class="text-[var(--pd-text-2)]">{Publr.t("Time to read:")}</dt>
+        <dd class="m-0">{view.outline.minutes <= 1 ? Publr.t("< 1 minute") : `${view.outline.minutes} ${Publr.t("minutes")}`}</dd>
+      </dl>
+      <div class="px-2 py-2">
+        {view.outline.headings.map((h) => (
+          <button type="button" key={`${h.key}${h.text}`} class="flex h-7 w-full items-center gap-1.5 rounded-[5px] pr-2 text-left text-[11px] hover:bg-[var(--pd-bg-2)]" style={{ paddingLeft: `${8 + h.guide}px` }} onClick={() => selectRow(h.key)}>
+            <span class="shrink-0 rounded-[3px] bg-[var(--pd-bg-2)] px-1 text-[10px] font-[550]">{h.level}</span>
+            <span class="truncate">{h.text}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LeftPanel() {
+  return (
+    <aside data-pd-left class="flex w-[300px] shrink-0 flex-col border-r border-[var(--pd-border)] bg-[var(--pd-bg)] text-[11px] text-[var(--pd-text)]">
+      {view.left === "inserter" ? (
+        <PanelHead label={Publr.t("Block library")} onClose={() => closeLeft()}>
+          <Tab label={Publr.t("Blocks")} selected={view.inserterTab === "blocks"} onClick={() => (view.inserterTab = "blocks")} />
+          <Tab label={Publr.t("Patterns")} selected={view.inserterTab === "patterns"} onClick={() => (view.inserterTab = "patterns")} />
+          <Tab label={Publr.t("Media")} selected={view.inserterTab === "media"} onClick={() => (view.inserterTab = "media")} />
+        </PanelHead>
+      ) : (
+        <PanelHead label={Publr.t("Document overview")} onClose={() => closeLeft()}>
+          <Tab label={Publr.t("List View")} selected={view.listTab === "list"} onClick={() => (view.listTab = "list")} />
+          <Tab label={Publr.t("Outline")} selected={view.listTab === "outline"} onClick={() => (view.listTab = "outline")} />
+          <Tab label={Publr.t("Patterns")} selected={view.listTab === "patterns"} onClick={() => (view.listTab = "patterns")} />
+        </PanelHead>
+      )}
+      {view.left === "inserter" && view.inserterTab === "blocks" && <BlockLibrary />}
+      {view.left === "inserter" && view.inserterTab === "patterns" && <PatternsList />}
+      {view.left === "inserter" && view.inserterTab === "media" && <div class="p-4 text-[var(--pd-text-2)]">{Publr.t("Media arrives with a later step.")}</div>}
+      {view.left === "list" && view.listTab === "list" && <ListView />}
+      {view.left === "list" && view.listTab === "outline" && <Outline />}
+      {view.left === "list" && view.listTab === "patterns" && <PatternsList />}
+    </aside>
+  );
+}
+
+// ------------------------------------------------------------ the right sidebar
+
+function DocumentTab() {
+  return (
+    <div data-sidebar-document>
+      <section class="border-b border-[var(--pd-border)]">
+        <header class="flex h-12 items-center gap-2 pr-2 pl-4">
+          <Icon name="file" size="sm" />
+          <h2 class="min-w-0 flex-1 truncate text-[13px] font-[550]" data-document-title>
+            {view.title}
+          </h2>
+          <DropdownMenu>
+            <DropdownMenuTrigger classes="flex h-6 w-6 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]">
+              <Icon name="more" size="sm" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="right" size="xs" classes="w-[180px]">
+              <DropdownMenuItem size="xs" onClick={() => preview()}>
+                <span class="flex-1">{Publr.t("View")}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem size="xs" onClick={() => later("Renaming")}>
+                <span class="flex-1">{Publr.t("Rename")}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </header>
+      </section>
+      <section class="border-b border-[var(--pd-border)] pb-3" data-template>
+        <Title
+          actions={
+            <button type="button" class="h-6 rounded-[5px] px-2 text-[11px] text-[var(--pd-brand)] hover:bg-[var(--pd-bg-2)]" onClick={() => later("Editing the template")}>
+              {Publr.t("Edit")}
+            </button>
+          }
+        >
+          {Publr.t("Template")}
+        </Title>
+        <div class="px-4 text-[11px]">
+          <div class="font-[550]">{view.template}</div>
+          <p class="m-0 mt-1 leading-4 text-[var(--pd-text-2)]">{view.template === "Home" ? Publr.t("The front page: the shared header and footer around the composition.") : Publr.t("Every static page: title above the document, header and footer around it.")}</p>
+        </div>
+      </section>
+      <section class="border-b border-[var(--pd-border)]">
+        <Title>{Publr.t("Featured image")}</Title>
+        <div class="px-4 pb-3">
+          <button type="button" class="flex h-8 w-full items-center justify-center rounded-[5px] border border-[var(--pd-border)] text-[11px] hover:bg-[var(--pd-bg-2)]" onClick={() => later("The featured image")}>
+            {Publr.t("Set featured image")}
+          </button>
+        </div>
+      </section>
+      <section class="border-b border-[var(--pd-border)] pb-2">
+        <Title>{Publr.t("Template content")}</Title>
+        <button type="button" class="mx-2 flex h-8 w-[calc(100%-16px)] items-center gap-2 rounded-[5px] px-2 text-[11px] hover:bg-[var(--pd-bg-2)]" onClick={() => selectPath("")}>
+          <Icon name="stack" size="sm" />
+          {Publr.t("Content")}
+        </button>
+      </section>
+      <section class="pb-3">
+        <Title>{Publr.t("Changes")}</Title>
+        <p class="m-0 px-4 text-[11px] leading-4 text-[var(--pd-text-2)]" data-pd-doc-state>
+          {view.edits === 0 ? Publr.t("No changes yet.") : view.edits === 1 ? Publr.t("1 change, kept in this tab until saving comes.") : Publr.t("{n} changes, kept in this tab until saving comes.", { n: String(view.edits) })}
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function kindLabel(text: string | null, image: boolean): string {
+  if (text === "rich") return Publr.t("Rich text");
+  if (text === "multiline") return Publr.t("Multi-line text");
+  if (text === "plain") return Publr.t("Text, one line");
+  return image ? Publr.t("Image") : Publr.t("Link");
+}
+
+function BlockCard({ icon, title, badge, description }: { icon: string; title: string; badge: string; description: string }) {
+  return (
+    <section class="border-b border-[var(--pd-border)] px-4 py-3" data-block-card>
+      <div class="flex items-start gap-2">
+        <Icon name={icon as never} size="sm" classes="mt-px" />
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-1.5">
+            <h2 class="truncate text-[13px] font-[550]">{title}</h2>
+            {badge && <span class="rounded-[4px] bg-[var(--pd-component-select)] px-1.5 text-[10px] leading-4 text-[var(--pd-component)]">{badge}</span>}
+          </div>
+          {description && <p class="m-0 mt-1 text-[11px] leading-4 text-[var(--pd-text-2)]">{description}</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BlockTab() {
+  return (
+    <div data-sidebar-block>
+      {view.inspector.kind === "page" && <p class="m-0 p-4 text-[11px] text-[var(--pd-text-2)]">{Publr.t("No block selected.")}</p>}
+      {view.inspector.kind === "many" && <BlockCard icon="components" title={manyView().title} badge="" description="" />}
+      {view.inspector.kind === "block" && (
+        <div data-pd-inspector="block">
+          <BlockCard icon={blockView().icon} title={blockView().title} badge={blockView().pattern ? Publr.t("Pattern") : ""} description={blockView().description} />
+          {blockView().pattern && (
+            <div class="border-b border-[var(--pd-border)] px-4 py-3">
+              <button type="button" class="flex h-8 w-full items-center justify-center rounded-[5px] border border-[var(--pd-border)] text-[11px] font-[550] hover:bg-[var(--pd-bg-2)]" onClick={() => later("Edit pattern")}>
+                {Publr.t("Edit pattern")}
+              </button>
+            </div>
+          )}
+          <section class="pb-2">
+            <Title>{Publr.t("Content")}</Title>
+            {blockView().rows.map((row) => (
+              <button
+                type="button"
+                key={row.key}
+                data-pd-field-row={row.key}
+                class="mx-2 flex h-8 w-[calc(100%-16px)] items-center gap-2 rounded-[5px] px-2 text-left text-[11px] hover:bg-[var(--pd-bg-2)]"
+                onMouseEnter={() => hoverKey(row.key)}
+                onMouseLeave={() => hoverKey("")}
+                onClick={() => selectKey(row.key)}
+              >
+                <Icon name={row.icon as never} size="sm" classes="shrink-0" />
+                <span class="shrink-0 font-[550]">{row.label}</span>
+                <span class="min-w-0 flex-1 truncate text-[var(--pd-text-2)]">{row.preview}</span>
+              </button>
+            ))}
+          </section>
+        </div>
+      )}
+      {view.inspector.kind === "field" && (
+        <div data-pd-inspector="field">
+          <BlockCard icon={fieldView().icon} title={fieldView().title} badge="" description={fieldView().description} />
+          <div class="flex h-8 items-center border-b border-[var(--pd-border)] px-2">
+            <button type="button" class="flex h-6 items-center gap-1 rounded-[5px] px-1 text-[11px] text-[var(--pd-text-2)] hover:bg-[var(--pd-bg-2)] hover:text-[var(--pd-text)]" onClick={() => back()}>
+              <PdIcon name="back" size={16} />
+              {fieldView().blockTitle}
+            </button>
+          </div>
+          {fieldView().text && (
+            <section class="border-b border-[var(--pd-border)] pb-3" data-pd-section="text">
+              <Title>{kindLabel(fieldView().text, false)}</Title>
+              <div class="flex flex-col gap-2 px-4 text-[11px]">
+                {fieldView().text === "rich" && (
+                  <div class="flex flex-wrap gap-1" data-pd-formats>
+                    {fieldView().formats.map((f) => (
+                      <span key={f} class="rounded-[4px] bg-[var(--pd-bg-2)] px-1.5 py-0.5 capitalize">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <span class="leading-4 text-[var(--pd-text-2)]">
+                  {fieldView().text === "plain"
+                    ? Publr.t("Edited in place on the canvas. Enter or Esc ends the edit.")
+                    : fieldView().text === "multiline"
+                      ? Publr.t("Edited in place. Enter starts a new line, Esc ends the edit.")
+                      : Publr.t("Edited in place, with only the formats this text uses. Esc ends the edit.")}
+                </span>
+                {view.editing !== fieldView().key && (
+                  <button type="button" class="h-6 self-start rounded-[5px] bg-[var(--pd-bg-2)] px-2" data-pd-edit-text onClick={() => editKey(fieldView().key)}>
+                    {Publr.t("Edit text")}
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
+          {fieldView().image && (
+            <section class="border-b border-[var(--pd-border)] pb-3" data-pd-section="image">
+              <Title>{Publr.t("Image")}</Title>
+              <div class="flex flex-col gap-2 px-4">
+                <div class="flex h-[120px] items-center justify-center overflow-hidden rounded-[5px] bg-[var(--pd-bg-2)]">
+                  <img src={fieldView().src} alt="" class="max-h-full max-w-full object-contain" />
+                </div>
+                <button type="button" class="flex h-7 items-center justify-center gap-1 rounded-[5px] bg-[var(--pd-brand)] px-2 text-[11px] text-white" data-pd-replace-image onClick={() => pickImage(fieldView().key)}>
+                  {Publr.t("Replace image…")}
+                </button>
+                <Field label="Alt" text wide value={fieldView().alt} title={Publr.t("Alternative text")} onText={(v: string) => setAlt(fieldView().key, v)} />
+              </div>
+            </section>
+          )}
+          {fieldView().link && (
+            <section class="border-b border-[var(--pd-border)] pb-3" data-pd-section="link">
+              <Title>{Publr.t("Link")}</Title>
+              <div class="px-4">
+                <Field icon="link" text wide value={fieldView().href} title={Publr.t("Link address")} onText={(v: string) => setLink(fieldView().key, v)} />
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Sidebar() {
+  return (
+    <aside data-sidebar class="flex w-[280px] shrink-0 flex-col border-l border-[var(--pd-border)] bg-[var(--pd-bg)] text-[11px] text-[var(--pd-text)]">
+      <div class="flex h-10 shrink-0 items-center gap-1 border-b border-[var(--pd-border)] px-2" role="tablist" aria-label={Publr.t("Editor settings")}>
+        <Tab label={Publr.t("Document")} selected={view.sidebar === "document"} onClick={() => (view.sidebar = "document")} />
+        <Tab label={Publr.t("Block")} selected={view.sidebar === "block"} onClick={() => (view.sidebar = "block")} />
+      </div>
+      <div data-pd-scroll class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        {view.sidebar === "document" ? <DocumentTab /> : <BlockTab />}
+      </div>
+    </aside>
+  );
+}
+
+// ------------------------------------------------------------ over and under the canvas
+
+/** The block toolbar over the selection: what it is, then what it allows. */
+function BlockToolbar() {
+  return (
+    <div
+      data-block-toolbar
+      class="pointer-events-auto absolute z-10 flex h-10 items-center gap-0.5 rounded-[8px] bg-[var(--pd-bg)] px-1 text-[11px] text-[var(--pd-text)] shadow-[var(--pd-toolbar-shadow)]"
+      style={{ left: `${view.toolbar.x}px`, top: `${view.toolbar.y}px` }}
+      onMouseDown={keepFocus}
+    >
+      {view.inspector.kind === "block" && (
+        <>
+          <span class="flex h-8 items-center gap-1.5 px-1.5 text-[var(--pd-component)]">
+            <Icon name={blockView().icon as never} size="sm" />
+            <span class="font-[550]">{blockView().title}</span>
+          </span>
+          {blockView().pattern && (
+            <>
+              <span class="mx-0.5 h-6 w-px bg-[var(--pd-border)]"></span>
+              <button type="button" class="h-8 rounded-[5px] px-2 hover:bg-[var(--pd-bg-2)]" onClick={() => later("Edit pattern")}>
+                {Publr.t("Edit pattern")}
+              </button>
+            </>
+          )}
+        </>
+      )}
+      {view.inspector.kind === "field" && (
+        <>
+          <button type="button" class="flex h-8 items-center gap-1.5 rounded-[5px] px-1.5 hover:bg-[var(--pd-bg-2)]" title={`${Publr.t("Back to")} ${fieldView().blockTitle}`} onClick={() => back()}>
+            <Icon name={fieldView().icon as never} size="sm" />
+            <span class="font-[550]">{fieldView().title}</span>
+          </button>
+          {fieldView().text && (
+            <>
+              <span class="mx-0.5 h-6 w-px bg-[var(--pd-border)]"></span>
+              {FORMATS.map((f) => (
+                <BarButton key={f.f} title={fieldView().formats.includes(f.f) ? `${f.label} (${f.keys})` : `${f.label}: ${Publr.t("this text has no formats")}`} disabled={!fieldView().formats.includes(f.f) || view.editing !== fieldView().key} onClick={() => format(f.f)}>
+                  <Icon name={f.icon as never} size="sm" />
+                </BarButton>
+              ))}
+            </>
+          )}
+          {fieldView().link && (
+            <BarButton title={`${Publr.t("Link")}: ${fieldView().href}`} onClick={() => (view.sidebar = "block")}>
+              <Icon name="link" size="sm" />
+            </BarButton>
+          )}
+          {fieldView().image && (
+            <>
+              <span class="mx-0.5 h-6 w-px bg-[var(--pd-border)]"></span>
+              <button type="button" class="flex h-8 items-center gap-1 rounded-[5px] px-2 hover:bg-[var(--pd-bg-2)]" onClick={() => pickImage(fieldView().key)}>
+                <Icon name="replace" size="sm" />
+                {Publr.t("Replace")}
+              </button>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function Breadcrumb() {
+  return (
+    <nav data-breadcrumb aria-label={Publr.t("Block path")} class="flex h-[25px] shrink-0 items-center gap-1 overflow-hidden border-t border-[var(--pd-border)] bg-[var(--pd-bg)] px-4 text-[11px] whitespace-nowrap">
+      <button type="button" class="hover:text-[var(--pd-brand)]" onClick={() => selectPath("")}>
+        {Publr.t("Document")}
+      </button>
+      {view.breadcrumb.map((c) => (
+        <>
+          <span class="text-[var(--pd-text-2)]">›</span>
+          <button type="button" data-crumb={c.key} class="hover:text-[var(--pd-brand)]" onClick={() => selectPath(c.key)}>
+            {c.label}
+          </button>
+        </>
+      ))}
+    </nav>
+  );
+}
+
+function OutputPanel() {
+  return (
+    <section data-output class="grid h-72 shrink-0 grid-cols-2 gap-3 overflow-hidden border-t border-[var(--pd-border)] bg-[var(--pd-bg)] p-3 text-[11px]">
+      <div class="flex min-h-0 flex-col gap-1">
+        <div class="flex h-6 items-center justify-between">
+          <h2 class="font-[550] text-[var(--pd-text-2)]">{Publr.t("Downcast editing pipeline (full wire contract, live)")}</h2>
+          <button type="button" class="h-6 rounded-[5px] px-2 hover:bg-[var(--pd-bg-2)]" onClick={() => void copyHtml("editing")}>
+            {Publr.t("Copy")}
+          </button>
+        </div>
+        <pre data-output-editing class="m-0 min-h-0 flex-1 overflow-auto rounded-[5px] bg-[var(--pd-bg-2)] p-2 font-mono text-[10px] leading-[14px] break-words whitespace-pre-wrap">
+          {view.outputEditing}
+        </pre>
+      </div>
+      <div class="flex min-h-0 flex-col gap-1">
+        <div class="flex h-6 items-center justify-between">
+          <h2 class="font-[550] text-[var(--pd-text-2)]">{Publr.t("Downcast data pipeline (published shape)")}</h2>
+          <button type="button" class="h-6 rounded-[5px] px-2 hover:bg-[var(--pd-bg-2)]" onClick={() => void copyHtml("data")}>
+            {Publr.t("Copy")}
+          </button>
+        </div>
+        <pre data-output-data class="m-0 min-h-0 flex-1 overflow-auto rounded-[5px] bg-[var(--pd-bg-2)] p-2 font-mono text-[10px] leading-[14px] break-words whitespace-pre-wrap">
+          {view.outputData}
+        </pre>
+      </div>
+    </section>
+  );
+}
+
+export function ContentMode(props: ContentModeProps) {
+  installIcons();
+  Publr.effect(() => {
+    void openDoc(props.doc);
+  });
+  Publr.effect(() => () => detach());
+  return (
+    <div data-pd-shell data-pd-content class="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--pd-bg)] text-[11px] text-[var(--pd-text)]">
+      {!view.uiHidden && <TopBar />}
+      <div class="flex min-h-0 flex-1">
+        {!view.uiHidden && view.left !== "" && <LeftPanel />}
+        <div class="flex min-w-0 flex-1 flex-col">
+          <main data-pd-canvas class="relative min-h-0 flex-1 overflow-hidden bg-[var(--pd-canvas)]">
+            <div ref={canvasHost} data-pd-content-canvas class="absolute inset-0 overflow-hidden"></div>
+            {view.toolbar.shown && !view.uiHidden && <BlockToolbar />}
+            {view.loading && !view.error && <div class="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-[8px] bg-[var(--pd-bg)] px-3 py-2 shadow-[var(--pd-toolbar-shadow)]">{Publr.t("Opening the page…")}</div>}
+            {view.error && <div role="alert" class="absolute top-3 left-1/2 -translate-x-1/2 rounded-[8px] bg-[var(--pd-bg)] px-3 py-2 shadow-[var(--pd-toolbar-shadow)]">{view.error}</div>}
+            {view.notice && <div role="status" data-pd-notice class="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-[8px] bg-[var(--pd-menu)] px-3 py-2 text-[var(--pd-menu-text)] shadow-[var(--pd-toolbar-shadow)]">{view.notice}</div>}
+          </main>
+          {!view.uiHidden && <Breadcrumb />}
+          {!view.uiHidden && view.output && <OutputPanel />}
+        </div>
+        {!view.uiHidden && view.sidebarOpen && <Sidebar />}
+      </div>
+      <input ref={fileInputRef} type="file" accept="image/*" class="hidden" data-pd-image-input onChange={(event: Event) => filePicked(event)} />
+    </div>
+  );
+}

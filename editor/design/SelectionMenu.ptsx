@@ -1,0 +1,173 @@
+// The right-click menu on the canvas and on layers, after the editor's: copy and paste,
+// arrange, group and frame, auto layout and components, the instance's own items, show
+// and lock, flip, delete; each with its key. It opens at the pointer over what it wraps
+// (ui DropdownMenuContextArea); a right-click on a layer that is not selected selects it
+// first (the canvas and the rows do that before the menu opens).
+import { Publr } from "publr-jsx";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuContextArea } from "../../../ui/src/components/Dropdown/DropdownMenuContextArea.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { DropdownMenuSubTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuSubTrigger.ptsx";
+import {
+  addAutoLayout,
+  canPaste,
+  canPushToMain,
+  copySelection,
+  createComponent,
+  cutSelection,
+  deleteSelection,
+  detachInstance,
+  duplicate,
+  flip,
+  goToMain,
+  paste,
+  pushToMain,
+  reorder,
+  resetOverrides,
+  selectAll,
+  toggleLocked,
+  toggleVisible,
+  ungroup,
+  wrap,
+} from "./edits";
+import { shell } from "./store";
+
+export type SelectionMenuProps = {
+  classes?: string;
+  children?: JSX.Element;
+  /** Items of the shell around the editor, first in the menu while layers are
+   * selected (the design system's sampling, while it is open beside). */
+  extra?: JSX.Element;
+};
+
+export function SelectionMenu({ classes = "", children, extra }: SelectionMenuProps) {
+  return (
+    <DropdownMenu classes={["block", classes].join(" ")}>
+      <DropdownMenuContextArea classes="contents">{children}</DropdownMenuContextArea>
+      <DropdownMenuContent align="pointer" size="xs" classes="w-[240px]">
+        {shell.selection.length > 0 ? (
+          <div data-pd-context-menu>
+            {extra}
+            <DropdownMenuItem size="xs" onClick={() => copySelection()}>
+              <span class="flex-1">{Publr.t("Copy")}</span>
+              <span class="opacity-60">⌘C</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => cutSelection()}>
+              <span class="flex-1">{Publr.t("Cut")}</span>
+              <span class="opacity-60">⌘X</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" disabled={!canPaste()} onClick={() => paste()}>
+              <span class="flex-1">{Publr.t("Paste here")}</span>
+              <span class="opacity-60">⌘V</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => duplicate()}>
+              <span class="flex-1">{Publr.t("Duplicate")}</span>
+              <span class="opacity-60">⌘D</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator size="xs" />
+            <DropdownMenuItem size="xs" onClick={() => reorder(Infinity)}>
+              <span class="flex-1">{Publr.t("Bring to front")}</span>
+              <span class="opacity-60">⌥⌘]</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => reorder(1)}>
+              <span class="flex-1">{Publr.t("Bring forward")}</span>
+              <span class="opacity-60">⌘]</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => reorder(-1)}>
+              <span class="flex-1">{Publr.t("Send backward")}</span>
+              <span class="opacity-60">⌘[</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => reorder(-Infinity)}>
+              <span class="flex-1">{Publr.t("Send to back")}</span>
+              <span class="opacity-60">⌥⌘[</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator size="xs" />
+            <DropdownMenuItem size="xs" onClick={() => wrap("group")}>
+              <span class="flex-1">{Publr.t("Group selection")}</span>
+              <span class="opacity-60">⌘G</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => wrap("frame")}>
+              <span class="flex-1">{Publr.t("Frame selection")}</span>
+              <span class="opacity-60">⌥⌘G</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => ungroup()}>
+              <span class="flex-1">{Publr.t("Ungroup")}</span>
+              <span class="opacity-60">⇧⌘G</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator size="xs" />
+            <DropdownMenuItem size="xs" onClick={() => addAutoLayout()}>
+              <span class="flex-1">{Publr.t("Add auto layout")}</span>
+              <span class="opacity-60">⇧A</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => createComponent()}>
+              <span class="flex-1">{Publr.t("Create component")}</span>
+              <span class="opacity-60">⌥⌘K</span>
+            </DropdownMenuItem>
+            {shell.inspector?.instanceId && (
+              <div>
+                <DropdownMenuItem size="xs" disabled={!shell.inspector?.hasOverrides} onClick={() => resetOverrides()}>
+                  <span class="flex-1">{Publr.t("Reset instance")}</span>
+                </DropdownMenuItem>
+                {shell.inspector?.kind === "instance" && (
+                  <DropdownMenuItem size="xs" onClick={() => detachInstance()}>
+                    <span class="flex-1">{Publr.t("Detach instance")}</span>
+                    <span class="opacity-60">⌥⌘B</span>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenu sub>
+                  <DropdownMenuSubTrigger size="xs">{Publr.t("Main component")}</DropdownMenuSubTrigger>
+                  <DropdownMenuContent align="sub" size="xs" classes="w-[260px]">
+                    {/* After the click: the page switch takes these rows out, and the menu must close first. */}
+                    <DropdownMenuItem size="xs" onClick={() => setTimeout(() => void goToMain())}>
+                      <span class="flex-1">{Publr.t("Go to main component")}</span>
+                      <span class="opacity-60">⌃⌥⌘K</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem size="xs" disabled={!canPushToMain()} onClick={() => void pushToMain()}>
+                      <span class="flex-1">{Publr.t("Push changes to main component")}</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )}
+            <DropdownMenuSeparator size="xs" />
+            <DropdownMenuItem size="xs" onClick={() => toggleVisible()}>
+              <span class="flex-1">{Publr.t("Show/Hide")}</span>
+              <span class="opacity-60">⇧⌘H</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => toggleLocked()}>
+              <span class="flex-1">{Publr.t("Lock/Unlock")}</span>
+              <span class="opacity-60">⇧⌘L</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator size="xs" />
+            <DropdownMenuItem size="xs" onClick={() => flip("h")}>
+              <span class="flex-1">{Publr.t("Flip horizontal")}</span>
+              <span class="opacity-60">⇧H</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => flip("v")}>
+              <span class="flex-1">{Publr.t("Flip vertical")}</span>
+              <span class="opacity-60">⇧V</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator size="xs" />
+            <DropdownMenuItem size="xs" onClick={() => deleteSelection()}>
+              <span class="flex-1">{Publr.t("Delete")}</span>
+              <span class="opacity-60">⌫</span>
+            </DropdownMenuItem>
+          </div>
+        ) : (
+          <div data-pd-context-menu>
+            <DropdownMenuItem size="xs" disabled={!canPaste()} onClick={() => paste()}>
+              <span class="flex-1">{Publr.t("Paste here")}</span>
+              <span class="opacity-60">⌘V</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem size="xs" onClick={() => selectAll()}>
+              <span class="flex-1">{Publr.t("Select all")}</span>
+              <span class="opacity-60">⌘A</span>
+            </DropdownMenuItem>
+          </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

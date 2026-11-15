@@ -1,0 +1,110 @@
+// Manage memory, after Figma's window of the same name, measured rather than projected:
+// how near the fullest engine is to its limit (the wall: past it a page read or an edit
+// fails; the budget pages are let go at is not one) and the layers on the page; then what is in use, what is warm (pages and files kept so they show at once,
+// let go first when room is needed), what the engines keep reserved for reuse, and all
+// of it together; the switch that shows each layer's share in the layers panel, and what
+// keeps memory down. Figma's Imported components row has no counterpart: libraries are
+// not built.
+import { Publr } from "publr-jsx";
+import { IconButton } from "./IconButton.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import { percentOf, shell, toggleMemoryLayers, toggleMemoryWindow } from "./store";
+
+/** Past this share of the limit what is open is near it: the bar's mark, and it warns. */
+export const MEMORY_WARN = 0.9;
+
+type BarProps = { classes?: string };
+
+/** The bar: how much of its limit the fullest engine holds (the percentage). */
+export function MemoryBar({ classes = "" }: BarProps) {
+  return (
+    <div class={["relative h-2 rounded-full bg-[var(--pd-bg-3)]", classes]} role="meter" aria-label={Publr.t("Memory usage")} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(shell.memoryUse.share * 100)}>
+      <div class="flex h-full overflow-hidden rounded-full">
+        <span class={["h-full min-w-2 rounded-full", shell.memoryUse.share >= MEMORY_WARN ? "bg-[var(--pd-danger)]" : "bg-[var(--pd-text-2)]"]} style={{ width: `${shell.memoryUse.share * 100}%` }}></span>
+      </div>
+      <span class="absolute -top-1.5 -bottom-1.5 w-px bg-[var(--pd-text-3)]" style={{ left: `${MEMORY_WARN * 100}%` }}></span>
+    </div>
+  );
+}
+
+type RowProps = { label: string; value: string; dot?: string; title?: string };
+
+function Row({ label, value, dot = "", title = "" }: RowProps) {
+  return (
+    <div class="flex h-8 items-center gap-2" title={title}>
+      {dot && <span class={["h-2 w-2 shrink-0 rounded-full", dot]}></span>}
+      <span class="min-w-0 flex-1 truncate">{label}</span>
+      <span class="shrink-0 tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+const TIPS = [
+  { lead: "Close files you are not using.", rest: "Each open file keeps its own memory until it is let go." },
+  { lead: "Split very large pages.", rest: "Pages you looked at longest ago are let go when room is needed, so the biggest page is what has to fit." },
+  { lead: "Clean up layers and components.", rest: "Delete hidden layers you don't need and reduce nested layers, especially in components." },
+  { lead: "Place images at the size they are shown.", rest: "A large image takes more memory the closer you zoom in on it." },
+];
+
+function windowKey(event: KeyboardEvent): void {
+  if (event.key !== "Escape") return;
+  event.stopPropagation();
+  toggleMemoryWindow();
+}
+
+export function MemoryWindow() {
+  const mb = (bytes: number) => `${Math.round(bytes / 1048576)} MB`;
+  return (
+    <div data-pd-memory-root>
+      {shell.memoryWindow && !shell.uiHidden && (
+        <div
+          role="dialog"
+          aria-label={Publr.t("Manage memory")}
+          tabindex={-1}
+          data-pd-memory-window
+          class="fixed top-12 z-40 flex w-[320px] flex-col rounded-[13px] border border-[var(--pd-border)] bg-[var(--pd-bg)] text-[11px] text-[var(--pd-text)] shadow-[0_2px_5px_rgba(0,0,0,0.15),0_10px_16px_rgba(0,0,0,0.12),0_0_0.5px_rgba(0,0,0,0.15)] outline-none"
+          style={{ left: `${56 + (shell.leftOpen ? 246 : 0) + 8}px` }}
+          onKeyDown={windowKey}
+        >
+          <header class="flex h-12 shrink-0 items-center border-b border-[var(--pd-border)] pr-2 pl-4">
+            <h2 class="flex-1 text-[13px] font-[550]">{Publr.t("Manage memory")}</h2>
+            <IconButton icon="close" title={Publr.t("Close")} onClick={() => toggleMemoryWindow()} />
+          </header>
+          <div class="px-4 pt-4 pb-2">
+            <MemoryBar />
+            <div class="mt-2">
+              <Row label={Publr.t("Memory used")} value={percentOf(shell.memoryUse.share)} title={Publr.t("How much of its 4 GB the fullest engine holds (this window's and each background worker's has its own). Past it, reading a page or an edit fails.")} />
+              <Row label={Publr.t("Layers on this page")} value={shell.pageLayers.toLocaleString()} />
+            </div>
+            <div class="mt-1 border-t border-[var(--pd-border)] pt-1">
+              <Row label={Publr.t("In use")} value={mb(shell.memoryUse.active)} title={`${Publr.t("Images")} ${mb(shell.memoryUse.images)}, ${Publr.t("GPU")} ${mb(shell.memoryUse.gpu)}, ${Publr.t("background drawing")} ${mb(shell.memoryUse.workers)}`} />
+              <Row label={Publr.t("Warm, let go when needed")} value={mb(shell.memoryUse.warm)} title={Publr.t("Pages read before and other open files, kept so they show at once. They are let go first when room is needed, so they never hold you back.")} />
+              <Row label={Publr.t("Reserved for reuse")} value={mb(shell.memoryUse.reserved)} title={Publr.t("Memory the engines grew into and reuse for what comes next (the browser does not take it back).")} />
+              <Row label={Publr.t("Taken from the browser")} value={mb(shell.memoryUse.total)} />
+              <div class="flex h-8 items-center gap-1">
+                <span class="min-w-0 truncate">{Publr.t("Show memory usage in layers panel")}</span>
+                <span class="flex shrink-0 text-[var(--pd-text-2)]" title={Publr.t("Each page's share in the pages list (measured when the page was last in memory; – not read yet) and each layer's share in the layers list (the page's share split by the layers it holds).")}>
+                  <PdIcon name="info" />
+                </span>
+                <span class="flex-1"></span>
+                <button type="button" role="switch" aria-checked={shell.memoryLayers} aria-label={Publr.t("Show memory usage in layers panel")} class={["relative h-4 w-7 shrink-0 rounded-full", shell.memoryLayers ? "bg-[var(--pd-brand)]" : "bg-[var(--pd-bg-3)]"]} data-pd-memory-layers onClick={() => toggleMemoryLayers()}>
+                  <span class={["absolute top-0.5 h-3 w-3 rounded-full bg-white transition-[left]", shell.memoryLayers ? "left-[14px]" : "left-0.5"]}></span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <section class="border-t border-[var(--pd-border)] px-4 pt-4 pb-4">
+            <h3 class="text-[11px] font-[550]">{Publr.t("Tips to reduce memory")}</h3>
+            <ul class="mt-2 list-disc pl-4 leading-4">
+              {TIPS.map((tip) => (
+                <li key={tip.lead} class="mt-2">
+                  <span class="font-[550]">{Publr.t(tip.lead)}</span> {Publr.t(tip.rest)}
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}

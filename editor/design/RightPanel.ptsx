@@ -1,0 +1,909 @@
+// The right panel: the share bar (who is here, Present, Share), the Design and
+// Prototype tabs with the zoom menu, then the Design tab: the selection's properties in
+// the editor's sections (inspector.ts), or with nothing selected the page's background,
+// the local styles and Export. Every control writes to the document (edits.ts): typing
+// applies on Enter or leaving the field, a scrub or a drag is one undo step.
+import { Publr } from "publr-jsx";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { Check } from "./Check.ptsx";
+import { Choice } from "./Choice.ptsx";
+import type { ChoiceItem } from "./Choice.ptsx";
+import { ConstraintBox } from "./ConstraintBox.ptsx";
+import {
+  addAutoLayout,
+  addEffect,
+  addPaint,
+  detachStyle,
+  align,
+  createComponent,
+  detachInstance,
+  effectEdit,
+  families,
+  flip,
+  goToMain,
+  movePaint,
+  padEdit,
+  paintOpacityEdit,
+  parseHex,
+  radiusEdit,
+  removeAutoLayout,
+  removeEffect,
+  removeEffects,
+  removePaint,
+  resetOverrides,
+  rotate90,
+  setAlignCell,
+  setAll,
+  setConstraint,
+  setCrossGap,
+  setEffectType,
+  setFamily,
+  setFlow,
+  setFontSize,
+  setFontStyle,
+  setGap,
+  setH,
+  setLayout,
+  setLetterSpacing,
+  setLineHeight,
+  setOpacity,
+  setPageBackground,
+  setPaintHex,
+  setProperty,
+  setRotation,
+  setSizing,
+  setStroke,
+  setStrokeSides,
+  setTextAlign,
+  setTextResize,
+  setTextStyle,
+  setTextValign,
+  setW,
+  setX,
+  setY,
+  strokeSideEdit,
+  strokeWeight,
+  stylesOf,
+  swapInstance,
+  toggleEffect,
+  togglePaint,
+  toggleVisible,
+} from "./edits";
+import { Field } from "./Field.ptsx";
+import { IconButton } from "./IconButton.ptsx";
+import { Paint } from "./Paint.ptsx";
+import { PaintPicker } from "./PaintPicker.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import { openPicker } from "./picker";
+import { Section } from "./Section.ptsx";
+import { Seg } from "./Seg.ptsx";
+import { componentList, loadAssets, shell, toggleStyleFolder } from "./store";
+import { bindField, openBind, openVariables, setLayerMode } from "./variables";
+import type { BindField } from "./variables";
+import { ZoomMenu } from "./ZoomMenu.ptsx";
+import { openRequest } from "./requests";
+
+/** The Prototype tab's sections, as Figma has them: none built yet, each opens its
+ * feature request. */
+const PROTOTYPE = [
+  { title: "Flow starting point", feature: "prototyping/flow-starting-points" },
+  { title: "Interactions", feature: "prototyping/on-click-on-tap" },
+  { title: "Scroll behavior", feature: "prototyping/overflow-scrolling" },
+  { title: "Show prototype settings", feature: "prototyping/device-and-model" },
+];
+
+const ALIGN_H = [
+  { key: "left", icon: "align-left" as const, title: "Align left" },
+  { key: "center", icon: "align-h-center" as const, title: "Align horizontal centers" },
+  { key: "right", icon: "align-right" as const, title: "Align right" },
+];
+const ALIGN_V = [
+  { key: "top", icon: "align-top" as const, title: "Align top" },
+  { key: "middle", icon: "align-v-center" as const, title: "Align vertical centers" },
+  { key: "bottom", icon: "align-bottom" as const, title: "Align bottom" },
+];
+const TURN = [
+  { key: "rotate", icon: "rotate-90" as const, title: "Rotate 90°" },
+  { key: "flip-h", icon: "flip-h" as const, title: "Flip horizontal" },
+  { key: "flip-v", icon: "flip-v" as const, title: "Flip vertical" },
+];
+const FLOW = [
+  { key: "free", icon: "flow-free" as const, title: "Freeform" },
+  { key: "vertical", icon: "flow-vertical" as const, title: "Vertical layout" },
+  { key: "horizontal", icon: "flow-horizontal" as const, title: "Horizontal layout" },
+  { key: "grid", icon: "flow-grid" as const, title: "Grid" },
+];
+const RESIZE = [
+  { key: "width-and-height", icon: "resize-width" as const, title: "Auto width" },
+  { key: "height", icon: "resize-height" as const, title: "Auto height" },
+  { key: "fixed", icon: "resize-fixed" as const, title: "Fixed size" },
+];
+const TEXT_ALIGN = [
+  { key: "left", icon: "text-left" as const, title: "Align left" },
+  { key: "center", icon: "text-center" as const, title: "Align center" },
+  { key: "right", icon: "text-right" as const, title: "Align right" },
+];
+const TEXT_VALIGN = [
+  { key: "top", icon: "valign-top" as const, title: "Align top" },
+  { key: "center", icon: "valign-middle" as const, title: "Align middle" },
+  { key: "bottom", icon: "valign-bottom" as const, title: "Align bottom" },
+];
+
+const H_CONSTRAINTS: ChoiceItem[] = [
+  { value: "left", label: "Left" },
+  { value: "right", label: "Right" },
+  { value: "left-right", label: "Left & right" },
+  { value: "center", label: "Center" },
+  { value: "scale", label: "Scale" },
+];
+const V_CONSTRAINTS: ChoiceItem[] = [
+  { value: "top", label: "Top" },
+  { value: "bottom", label: "Bottom" },
+  { value: "top-bottom", label: "Top & bottom" },
+  { value: "center", label: "Center" },
+  { value: "scale", label: "Scale" },
+];
+const BLENDS: ChoiceItem[] = [
+  { value: "pass-through", label: "Pass through" },
+  { value: "normal", label: "Normal" },
+  { value: "-", label: "" },
+  { value: "darken", label: "Darken" },
+  { value: "multiply", label: "Multiply" },
+  { value: "color-burn", label: "Color burn" },
+  { value: "-", label: "" },
+  { value: "lighten", label: "Lighten" },
+  { value: "screen", label: "Screen" },
+  { value: "color-dodge", label: "Color dodge" },
+  { value: "-", label: "" },
+  { value: "overlay", label: "Overlay" },
+  { value: "soft-light", label: "Soft light" },
+  { value: "hard-light", label: "Hard light" },
+  { value: "-", label: "" },
+  { value: "difference", label: "Difference" },
+  { value: "exclusion", label: "Exclusion" },
+  { value: "-", label: "" },
+  { value: "hue", label: "Hue" },
+  { value: "saturation", label: "Saturation" },
+  { value: "color", label: "Color" },
+  { value: "luminosity", label: "Luminosity" },
+];
+const STROKE_ALIGN: ChoiceItem[] = [
+  { value: "inside", label: "Inside" },
+  { value: "center", label: "Center" },
+  { value: "outside", label: "Outside" },
+];
+const STROKE_SIDES: ChoiceItem[] = [
+  { value: "all", label: "All" },
+  { value: "top", label: "Top" },
+  { value: "bottom", label: "Bottom" },
+  { value: "left", label: "Left" },
+  { value: "right", label: "Right" },
+  { value: "custom", label: "Custom" },
+];
+const EFFECT_TYPES: ChoiceItem[] = [
+  { value: "drop-shadow", label: "Drop shadow" },
+  { value: "inner-shadow", label: "Inner shadow" },
+  { value: "layer-blur", label: "Layer blur" },
+  { value: "background-blur", label: "Background blur" },
+];
+const DECORATION: ChoiceItem[] = [
+  { value: "none", label: "None" },
+  { value: "underline", label: "Underline" },
+  { value: "strikethrough", label: "Strikethrough" },
+];
+const CASES: ChoiceItem[] = [
+  { value: "none", label: "As typed" },
+  { value: "upper", label: "Uppercase" },
+  { value: "lower", label: "Lowercase" },
+  { value: "title", label: "Title case" },
+];
+
+/** The fields that can follow a variable: what binds them, where variables are offered. */
+const num = (scope: string, keys: string[]): BindField => ({ type: "number", scopes: [scope], keys });
+const B = {
+  width: num("width-height", ["width"]),
+  height: num("width-height", ["height"]),
+  gap: num("gap", ["gap"]),
+  crossGap: num("gap", ["crossGap"]),
+  padH: num("gap", ["padding/1", "padding/3"]),
+  padV: num("gap", ["padding/0", "padding/2"]),
+  pad: [0, 1, 2, 3].map((k) => num("gap", [`padding/${k}`])),
+  radius: { type: "number", scopes: ["corner-radius"], keys: ["radius"], also: ["radius/0", "radius/1", "radius/2", "radius/3"] } as BindField,
+  corner: [0, 1, 2, 3].map((k) => num("corner-radius", [`radius/${k}`])),
+  opacity: num("opacity", ["opacity"]),
+  strokeWeight: num("stroke-float", ["stroke/weight"]),
+  fontSize: { type: "number", scopes: ["font-size"], style: "size" } as BindField,
+  lineHeight: { type: "number", scopes: ["line-height"], style: "lineHeight" } as BindField,
+  letterSpacing: { type: "number", scopes: ["letter-spacing"], style: "letterSpacing" } as BindField,
+};
+
+/** A fill or stroke's colour, by the layer's kind (where colour variables are offered). */
+function paintField(which: "fills" | "strokes", k: number): BindField {
+  const kind = shell.inspector?.kind ?? "";
+  const scope = which === "strokes" ? "stroke" : kind === "text" ? "text-fill" : ["frame", "component", "component-set", "instance", "section"].includes(kind) ? "frame-fill" : "shape-fill";
+  return { type: "color", scopes: [scope], paint: which, index: k };
+}
+
+/** Both sides' variable when they follow the same one ("" otherwise). */
+const both = (a: string | undefined, b: string | undefined) => (a && a === b ? a : "");
+
+/** A label over a row of the panel's grid (two columns and an icon column). */
+const LABEL = "h-4 text-[11px] leading-4 text-[var(--pd-text-2)]";
+const GRID = "grid grid-cols-[88px_88px_24px] items-center gap-x-2";
+
+/** The word a W or H field ends with: how it sizes, unless fixed. */
+const sizingWord = (v: string) => (v === "fill" ? Publr.t("Fill") : v === "hug" ? Publr.t("Hug") : "");
+
+/** The paint row dragged (its index), while one is. */
+const dragging = { list: "", index: -1 };
+
+function sizingItems(axis: "w" | "h"): ChoiceItem[] {
+  const i = shell.inspector;
+  if (!i) return [];
+  const fixed = `${axis === "w" ? Publr.t("Fixed width") : Publr.t("Fixed height")} (${axis === "w" ? i.w : i.h})`;
+  const out: ChoiceItem[] = [{ value: "fixed", label: fixed }];
+  if (i.auto || i.kind === "text") out.push({ value: "hug", label: Publr.t("Hug contents") });
+  if (i.inFlow) out.push({ value: "fill", label: Publr.t("Fill container") });
+  return out;
+}
+
+const fontItems = (): ChoiceItem[] => families().map((f) => ({ value: f, label: f }));
+const styleItems = (family: string): ChoiceItem[] => stylesOf(family).map((f) => ({ value: f.style, label: f.style }));
+const swapItems = (): ChoiceItem[] => componentList().filter((c) => c.kind === "component").map((c) => ({ value: c.id, label: c.set ? `${c.set} / ${c.name}` : c.name }));
+
+export function RightPanel() {
+  return (
+    <aside data-pd-right class="flex h-full w-[241px] shrink-0 flex-col border-l border-[var(--pd-border)] bg-[var(--pd-bg)] text-[11px] text-[var(--pd-text)]">
+      <div class="flex h-[46px] shrink-0 items-center pr-2 pl-2">
+        <span class="flex h-6 w-6 items-center justify-center rounded-full bg-[#0c8ce9] text-[11px] font-[550] text-white" title={Publr.t("You")}>
+          Y
+        </span>
+        <span class="flex h-6 w-5 items-center justify-center text-[var(--pd-text-2)]">
+          <PdIcon name="chevron-down" size={20} />
+        </span>
+        <span class="flex-1"></span>
+        <button type="button" class="flex h-8 items-center gap-0.5 rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]" title={Publr.t("Present")} data-pd-button="present">
+          <PdIcon name="play" />
+          <PdIcon name="chevron-down" size={20} />
+        </button>
+        <button type="button" class="ml-0.5 h-8 rounded-[5px] bg-[var(--pd-brand)] px-3 text-[11px] font-[550] text-white" data-pd-button="share">
+          {Publr.t("Share")}
+        </button>
+      </div>
+      <div class="flex h-[34px] shrink-0 items-start gap-1 border-b border-[var(--pd-border)] pt-px pr-2 pl-2">
+        <button
+          type="button"
+          class={["h-6 rounded-[5px] px-2 text-[11px] font-[550]", shell.rightTab === "design" ? "bg-[var(--pd-bg-2)] text-[var(--pd-text)]" : "text-[var(--pd-text-2)] hover:text-[var(--pd-text)]"]}
+          onClick={() => (shell.rightTab = "design")}
+          data-pd-tab="design"
+        >
+          {Publr.t("Design")}
+        </button>
+        <button
+          type="button"
+          class={["h-6 rounded-[5px] px-2 text-[11px] font-[550]", shell.rightTab === "prototype" ? "bg-[var(--pd-bg-2)] text-[var(--pd-text)]" : "text-[var(--pd-text-2)] hover:text-[var(--pd-text)]"]}
+          onClick={() => (shell.rightTab = "prototype")}
+          data-pd-tab="prototype"
+        >
+          {Publr.t("Prototype")}
+        </button>
+        <span class="flex-1"></span>
+        <ZoomMenu />
+      </div>
+      <div data-pd-scroll class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        {shell.rightTab === "prototype" ? (
+          <div data-pd-prototype-tab>
+            {PROTOTYPE.map((row) => (
+              <button
+                type="button"
+                key={row.feature}
+                class="flex h-10 w-full items-center border-b border-[var(--pd-border)] pr-2 pl-4 text-left text-[11px] font-[550] hover:bg-[var(--pd-bg-2)]"
+                title={Publr.t("Not built yet: upvote it")}
+                data-pd-requestable={row.feature}
+                onClick={() => openRequest(row.feature)}
+              >
+                <span class="flex-1 opacity-40">{Publr.t(row.title)}</span>
+                <span class="flex h-6 w-6 items-center justify-center opacity-60">
+                  <PdIcon name="upvote" size={16} />
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : shell.inspector ? (
+          <div data-pd-inspector={shell.inspector.kind}>
+            <section class="border-b border-[var(--pd-border)]" data-pd-section="header">
+              <header class="flex h-10 items-center pr-2 pl-4">
+                <h3 class={["flex min-w-0 items-center gap-0.5 text-[13px] font-[550]", shell.inspector.purple ? "text-[var(--pd-component)]" : "text-[var(--pd-text)]"]}>
+                  <span class="truncate">{shell.inspector.title}</span>
+                </h3>
+                <span class="flex-1"></span>
+                {shell.inspector.kind === "instance" ? (
+                  <IconButton icon="l-component" title={Publr.t("Go to main component")} onClick={() => void goToMain()} />
+                ) : (
+                  <IconButton icon="l-component" title={`${Publr.t("Create component")} (⌥⌘K)`} onClick={() => createComponent()} />
+                )}
+                {shell.inspector.instanceId && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger classes="flex h-6 w-6 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-bg-2)]">
+                      <PdIcon name="more" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent size="xs" align="right" classes="w-[200px]">
+                      <DropdownMenuItem size="xs" onClick={() => void goToMain()}>
+                        {Publr.t("Go to main component")}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem size="xs" disabled={!shell.inspector.hasOverrides} onClick={() => resetOverrides()}>
+                        {Publr.t("Reset all changes")}
+                      </DropdownMenuItem>
+                      {shell.inspector.kind === "instance" && (
+                        <DropdownMenuItem size="xs" onClick={() => detachInstance()}>
+                          <span class="flex-1">{Publr.t("Detach instance")}</span>
+                          <span class="opacity-60">⌥⌘B</span>
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </header>
+              {shell.inspector.subtitle && (
+                <div class="-mt-2 flex h-6 items-center gap-1 pb-2 pl-4 text-[var(--pd-text-2)]">
+                  {shell.inspector.subtitle}
+                  <PdIcon name="l-instance" size={20} />
+                </div>
+              )}
+              {shell.inspector.props.length > 0 && (
+                <div class="flex flex-col gap-1 pr-2 pb-3 pl-4" data-pd-section="properties">
+                  {shell.inspector.props.map((p) => (
+                    <div key={p.id} class="grid h-7 grid-cols-[76px_76px] items-center gap-x-2" data-pd-prop={p.name}>
+                      <span class="truncate text-[var(--pd-text-2)]" title={p.name}>
+                        {p.name}
+                      </span>
+                      {p.type === "boolean" ? (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={p.on}
+                          class={["relative h-4 w-7 rounded-full", p.on ? "bg-[var(--pd-brand)]" : "bg-[var(--pd-bg-3)]"]}
+                          data-pd-prop-switch={p.name}
+                          onClick={() => void setProperty(p.id, !p.on)}
+                        >
+                          <span class={["absolute top-0.5 h-3 w-3 rounded-full bg-white transition-[left]", p.on ? "left-[14px]" : "left-0.5"]}></span>
+                        </button>
+                      ) : p.type === "text" ? (
+                        <Field value={p.value} text name={`prop-${p.name}`} onText={(t: string) => void setProperty(p.id, t)} />
+                      ) : p.type === "variant" ? (
+                        <Choice label={p.name} value={p.value} items={p.options} name={`prop-${p.name}`} onPick={(v: string) => void setProperty(p.id, v)} />
+                      ) : (
+                        <Choice label={p.name} value={componentList().find((c) => c.id === p.value)?.name ?? p.value} items={swapItems()} search width={240} name={`prop-${p.name}`} onPick={(v: string) => void setProperty(p.id, v)} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+            {shell.inspector.kind === "instance" && shell.inspector.props.length === 0 && !shell.inspector.multi && (
+              <Section title={Publr.t("Instance")} name="instance">
+                <div class="grid grid-cols-[184px_24px] items-center gap-x-2">
+                  <Choice
+                    label={Publr.t("Swap instance")}
+                    value={shell.inspector.title}
+                    items={swapItems()}
+                    search
+                    width={240}
+                    name="swap"
+                    onPick={(v: string) => void swapInstance(v)}
+                  />
+                  <IconButton icon="more" title={Publr.t("Load components")} onClick={() => void loadAssets()} />
+                </div>
+              </Section>
+            )}
+            <Section title={Publr.t("Position")}>
+              <div class={LABEL}>{Publr.t("Alignment")}</div>
+              <div class="flex items-center gap-2">
+                <Seg items={ALIGN_H} name="align-h" disabled={shell.inspector.inFlow} onPick={(k: string) => align(k as "left")} />
+                <Seg items={ALIGN_V} name="align-v" disabled={shell.inspector.inFlow} onPick={(k: string) => align(k as "top")} />
+              </div>
+              <div class={LABEL}>{Publr.t("Position")}</div>
+              <div class={GRID}>
+                <Field label="X" value={shell.inspector.x} disabled={shell.inspector.inFlow} onValue={setX} />
+                <Field label="Y" value={shell.inspector.y} disabled={shell.inspector.inFlow} onValue={setY} />
+              </div>
+              {shell.inspector.constraints && (
+                <div class="flex flex-col gap-2">
+                  <div class={LABEL}>{Publr.t("Constraints")}</div>
+                  <div class="grid grid-cols-[88px_88px] grid-rows-[24px_24px] items-center gap-x-2 gap-y-2">
+                    <Choice label="Horizontal" icon="constraint-h" value={shell.inspector.constraints.h} items={H_CONSTRAINTS} name="constraint-h" onPick={(v: string) => setConstraint("h", v)} />
+                    <ConstraintBox h={shell.inspector.constraints.h} v={shell.inspector.constraints.v} onPick={(axis: "h" | "v", v: string) => setConstraint(axis, v)} />
+                    <Choice label="Vertical" icon="constraint-v" value={shell.inspector.constraints.v} items={V_CONSTRAINTS} name="constraint-v" onPick={(v: string) => setConstraint("v", v)} />
+                  </div>
+                </div>
+              )}
+              <div class={LABEL}>{Publr.t("Rotation")}</div>
+              <div class={GRID}>
+                <Field icon="angle" value={shell.inspector.rotation === "Mixed" ? "Mixed" : `${shell.inspector.rotation}°`} onValue={setRotation} name="rotation" />
+                <Seg items={TURN} name="turn" onPick={(k: string) => (k === "rotate" ? rotate90() : flip(k === "flip-h" ? "h" : "v"))} />
+              </div>
+            </Section>
+            <Section
+              title={Publr.t("Layout")}
+              actions={
+                <div class="flex items-center">
+                  {shell.inspector.container &&
+                    (shell.inspector.auto ? (
+                      <IconButton icon="minus" title={`${Publr.t("Remove auto layout")} (⌥⇧A)`} onClick={() => removeAutoLayout()} />
+                    ) : (
+                      <IconButton icon="auto-layout" title={`${Publr.t("Add auto layout")} (⇧A)`} onClick={() => addAutoLayout()} />
+                    ))}
+                </div>
+              }
+            >
+              {shell.inspector.container && (
+                <div class="flex flex-col gap-2">
+                  <div class={LABEL}>{Publr.t("Flow")}</div>
+                  <div class="flex items-center gap-2">
+                    <Seg items={FLOW} value={shell.inspector.flow} fill classes="w-[184px]" name="flow" onPick={(k: string) => setFlow(k)} />
+                    {shell.inspector.flow === "horizontal" && <IconButton icon="flow-grid" title={Publr.t("Wrap")} on={shell.inspector.wrap} onClick={() => setLayout({ wrap: !shell.inspector!.wrap })} />}
+                  </div>
+                </div>
+              )}
+              {shell.inspector.textResize && (
+                <div class="flex flex-col gap-2">
+                  <div class={LABEL}>{Publr.t("Resizing")}</div>
+                  <Seg items={RESIZE} value={shell.inspector.textResize} fill classes="w-[184px]" name="resize" onPick={(k: string) => setTextResize(k)} />
+                </div>
+              )}
+              <div class={LABEL}>{shell.inspector.inFlow || shell.inspector.auto ? Publr.t("Resizing") : Publr.t("Dimensions")}</div>
+              <div class={GRID}>
+                <div class="relative min-w-0">
+                  <Field label="W" value={shell.inspector.w} title={`${Publr.t("Width")}: ${shell.inspector.wSizing}`} disabled={shell.inspector.kind === "group"} onValue={setW} variable={shell.inspector.vars.width} onVariable={(el: HTMLElement) => openBind(B.width, el)} onDetach={() => bindField(B.width, null)} />
+                  {(shell.inspector.inFlow || shell.inspector.auto || shell.inspector.kind === "text") && (
+                    <div class="absolute top-0 right-0">
+                      <Choice bare label="Width" value={shell.inspector.wSizing} word={sizingWord(shell.inspector.wSizing)} items={sizingItems("w")} name="sizing-w" onPick={(v: string) => setSizing("w", v as "fixed")} />
+                    </div>
+                  )}
+                </div>
+                <div class="relative min-w-0">
+                  <Field label="H" value={shell.inspector.h} title={`${Publr.t("Height")}: ${shell.inspector.hSizing}`} disabled={shell.inspector.kind === "group" || shell.inspector.kind === "line"} onValue={setH} variable={shell.inspector.vars.height} onVariable={(el: HTMLElement) => openBind(B.height, el)} onDetach={() => bindField(B.height, null)} />
+                  {(shell.inspector.inFlow || shell.inspector.auto || shell.inspector.kind === "text") && (
+                    <div class="absolute top-0 right-0">
+                      <Choice bare label="Height" value={shell.inspector.hSizing} word={sizingWord(shell.inspector.hSizing)} items={sizingItems("h")} name="sizing-h" onPick={(v: string) => setSizing("h", v as "fixed")} />
+                    </div>
+                  )}
+                </div>
+                <IconButton icon="aspect-lock" title={Publr.t("Constrain proportions")} on={shell.constrain} onClick={() => (shell.constrain = !shell.constrain)} />
+              </div>
+              {shell.inspector.auto && (
+                <div class="flex flex-col gap-2">
+                  <div class="grid grid-cols-[88px_88px] items-start gap-x-2">
+                    <div class={LABEL}>{Publr.t("Alignment")}</div>
+                    <div class={LABEL}>{Publr.t("Gap")}</div>
+                  </div>
+                  <div class="grid grid-cols-[88px_88px] items-start gap-x-2">
+                    <div class="grid h-[56px] grid-cols-3 grid-rows-3 rounded-[5px] bg-[var(--pd-bg-2)] p-1" data-pd-align-box>
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((k) => (
+                        <button key={String(k)} type="button" class="group/cell flex items-center justify-center" title={`${["Top", "Center", "Bottom"][Math.floor(k / 3)]} ${["left", "center", "right"][k % 3]}`} onClick={() => setAlignCell(k % 3, Math.floor(k / 3))}>
+                          {shell.inspector!.alignCol === k % 3 && shell.inspector!.alignRow === Math.floor(k / 3) ? (
+                            <span class={["rounded-[1px] bg-[var(--pd-brand)]", shell.inspector!.flow === "vertical" ? "h-[3px] w-3" : "h-3 w-[3px]"]}></span>
+                          ) : (
+                            <span class="h-[3px] w-[3px] rounded-full bg-[var(--pd-text-3)] group-hover/cell:bg-[var(--pd-text-2)]"></span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    <div class="flex flex-col gap-2">
+                      <Field icon={shell.inspector.flow === "vertical" ? "gap-v" : "gap-h"} value={shell.inspector.gap} name="gap" onValue={setGap} variable={shell.inspector.vars.gap} onVariable={(el: HTMLElement) => openBind(B.gap, el)} onDetach={() => bindField(B.gap, null)} />
+                      {shell.inspector.wrap || shell.inspector.flow === "grid" ? <Field icon="gap-v" value={shell.inspector.crossGap} name="cross-gap" onValue={setCrossGap} variable={shell.inspector.vars.crossGap} onVariable={(el: HTMLElement) => openBind(B.crossGap, el)} onDetach={() => bindField(B.crossGap, null)} /> : <span></span>}
+                      <Choice label="Gap" value={shell.inspector.gap === "Auto" ? "Auto" : "Fixed"} items={[{ value: "Fixed", label: "Fixed" }, { value: "Auto", label: "Auto (space between)" }]} name="gap-mode" onPick={(v: string) => setLayout({ main: v === "Auto" ? "space-between" : "start" })} />
+                    </div>
+                  </div>
+                  <div class={LABEL}>{Publr.t("Padding")}</div>
+                  {shell.padSides ? (
+                    <div class="grid grid-cols-[88px_88px_24px] grid-rows-[24px_24px] items-center gap-x-2 gap-y-2">
+                      <Field label="T" value={shell.inspector.pads[0]} name="pad-top" onValue={padEdit([0])} variable={shell.inspector.vars["padding/0"]} onVariable={(el: HTMLElement) => openBind(B.pad[0], el)} onDetach={() => bindField(B.pad[0], null)} />
+                      <Field label="R" value={shell.inspector.pads[1]} name="pad-right" onValue={padEdit([1])} variable={shell.inspector.vars["padding/1"]} onVariable={(el: HTMLElement) => openBind(B.pad[1], el)} onDetach={() => bindField(B.pad[1], null)} />
+                      <IconButton icon="pad-sides" title={Publr.t("Individual padding")} on onClick={() => (shell.padSides = false)} />
+                      <Field label="B" value={shell.inspector.pads[2]} name="pad-bottom" onValue={padEdit([2])} variable={shell.inspector.vars["padding/2"]} onVariable={(el: HTMLElement) => openBind(B.pad[2], el)} onDetach={() => bindField(B.pad[2], null)} />
+                      <Field label="L" value={shell.inspector.pads[3]} name="pad-left" onValue={padEdit([3])} variable={shell.inspector.vars["padding/3"]} onVariable={(el: HTMLElement) => openBind(B.pad[3], el)} onDetach={() => bindField(B.pad[3], null)} />
+                    </div>
+                  ) : (
+                    <div class={GRID}>
+                      <Field icon="pad-h" value={shell.inspector.padH} name="pad-h" onValue={padEdit([1, 3])} variable={both(shell.inspector.vars["padding/1"], shell.inspector.vars["padding/3"])} onVariable={(el: HTMLElement) => openBind(B.padH, el)} onDetach={() => bindField(B.padH, null)} />
+                      <Field icon="pad-v" value={shell.inspector.padV} name="pad-v" onValue={padEdit([0, 2])} variable={both(shell.inspector.vars["padding/0"], shell.inspector.vars["padding/2"])} onVariable={(el: HTMLElement) => openBind(B.padV, el)} onDetach={() => bindField(B.padV, null)} />
+                      <IconButton icon="pad-sides" title={Publr.t("Individual padding")} onClick={() => (shell.padSides = true)} />
+                    </div>
+                  )}
+                </div>
+              )}
+              {shell.inspector.container && <Check label={Publr.t("Clip content")} checked={shell.inspector.clip} onToggle={() => setAll({ clip: !shell.inspector!.clip })} />}
+            </Section>
+            <Section
+              title={Publr.t("Appearance")}
+              actions={
+                <div class="flex items-center">
+                  {shell.inspector.modeMenu.length > 0 && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger classes="flex h-6 w-6 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-bg-2)]">
+                        <span title={Publr.t("Apply variable mode")} data-pd-button="apply-mode" class="flex">
+                          <PdIcon name="mode" />
+                        </span>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent size="xs" align="right" classes="w-[220px]">
+                        {shell.inspector.modeMenu.map((c) => (
+                          <div key={c.collection} data-pd-mode-menu={c.name}>
+                            <div class="truncate px-2 pt-1 pb-1 text-white/60">{c.name}</div>
+                            {c.modes.map((m) => (
+                              <DropdownMenuItem key={m.id} size="xs" onClick={() => setLayerMode(c.collection, m.id)}>
+                                <span class="w-4"></span>
+                                <span class="flex-1 truncate">{m.name}</span>
+                              </DropdownMenuItem>
+                            ))}
+                          </div>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                  <IconButton icon={shell.inspector.visible ? "eye" : "eye-off"} title={`${Publr.t("Show/Hide")} (⇧⌘H)`} onClick={() => toggleVisible()} />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger classes="flex h-6 w-6 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-bg-2)]">
+                      <PdIcon name="blend" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent size="xs" align="right" classes="w-[180px]">
+                      {BLENDS.map((b, k) =>
+                        b.value === "-" ? (
+                          <DropdownMenuSeparator key={`-${k}`} size="xs" />
+                        ) : (
+                          <DropdownMenuItem key={b.value} size="xs" onClick={() => setAll({ blend: b.value })}>
+                            <span class="w-4">{shell.inspector!.blendKey === b.value ? "✓" : ""}</span>
+                            <span class="flex-1">{b.label}</span>
+                          </DropdownMenuItem>
+                        ),
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              }
+            >
+              {shell.inspector.modeRows.map((r) => (
+                <div key={r.collection} class="grid grid-cols-[88px_88px_24px] items-center gap-x-2" data-pd-mode-row={r.name}>
+                  <span class="flex min-w-0 items-center gap-1 text-[var(--pd-text-2)]" title={r.name}>
+                    <PdIcon name="mode" size={20} classes="-m-0.5 shrink-0" />
+                    <span class="truncate">{r.name}</span>
+                  </span>
+                  <Choice label={r.name} value={r.mode} items={r.options} width={200} name={`mode-${r.name}`} onPick={(v: string) => setLayerMode(r.collection, v)} />
+                  <IconButton icon="minus" title={Publr.t("Remove mode")} onClick={() => setLayerMode(r.collection, "")} />
+                </div>
+              ))}
+              <div class={GRID}>
+                <div class={LABEL}>{Publr.t("Opacity")}</div>
+                {shell.inspector.radius !== null ? <div class={LABEL}>{Publr.t("Corner radius")}</div> : <span></span>}
+              </div>
+              <div class={GRID}>
+                <Field icon="opacity" value={shell.inspector.opacity} suffix={shell.inspector.opacity === "Mixed" ? "" : "%"} name="opacity" onValue={setOpacity} variable={shell.inspector.vars.opacity} onVariable={(el: HTMLElement) => openBind(B.opacity, el)} onDetach={() => bindField(B.opacity, null)} />
+                {shell.inspector.radius !== null ? <Field icon="radius" value={shell.inspector.radius ?? ""} name="radius" disabled={shell.radiusCorners} onValue={radiusEdit(-1)} variable={shell.inspector.vars.radius} onVariable={(el: HTMLElement) => openBind(B.radius, el)} onDetach={() => bindField(B.radius, null)} /> : <span></span>}
+                {shell.inspector.radius !== null ? <IconButton icon="radius-sides" title={Publr.t("Individual corners")} on={shell.radiusCorners} onClick={() => (shell.radiusCorners = !shell.radiusCorners)} /> : <span></span>}
+              </div>
+              {shell.inspector.radius !== null && shell.radiusCorners && (
+                <div class="grid grid-cols-[88px_88px] grid-rows-[24px_24px] items-center gap-x-2 gap-y-2" data-pd-corners>
+                  <Field label="↖" value={shell.inspector.radii[0]} name="radius-tl" onValue={radiusEdit(0)} variable={shell.inspector.vars["radius/0"]} onVariable={(el: HTMLElement) => openBind(B.corner[0], el)} onDetach={() => bindField(B.corner[0], null)} />
+                  <Field label="↗" value={shell.inspector.radii[1]} name="radius-tr" onValue={radiusEdit(1)} variable={shell.inspector.vars["radius/1"]} onVariable={(el: HTMLElement) => openBind(B.corner[1], el)} onDetach={() => bindField(B.corner[1], null)} />
+                  <Field label="↙" value={shell.inspector.radii[3]} name="radius-bl" onValue={radiusEdit(3)} variable={shell.inspector.vars["radius/3"]} onVariable={(el: HTMLElement) => openBind(B.corner[3], el)} onDetach={() => bindField(B.corner[3], null)} />
+                  <Field label="↘" value={shell.inspector.radii[2]} name="radius-br" onValue={radiusEdit(2)} variable={shell.inspector.vars["radius/2"]} onVariable={(el: HTMLElement) => openBind(B.corner[2], el)} onDetach={() => bindField(B.corner[2], null)} />
+                </div>
+              )}
+            </Section>
+            {shell.inspector.typography && (
+              <Section title={Publr.t("Typography")} actions={<IconButton icon="styles" title={Publr.t("Text styles")} />}>
+                {shell.inspector.typography.styleName && (
+                  <div class="flex h-6 items-center gap-1 text-[var(--pd-text-2)]">
+                    <PdIcon name="l-text" size={20} />
+                    <span class="truncate">{shell.inspector.typography.styleName}</span>
+                  </div>
+                )}
+                <div class="flex flex-col gap-2">
+                  <div class="flex w-[184px]">
+                    <Choice label="Font" value={shell.inspector.typography.family} items={fontItems()} search width={240} missing={shell.inspector.typography.missing} name="font-family" onPick={(v: string) => setFamily(v)} />
+                  </div>
+                  <div class={GRID}>
+                    <Choice label="Style" value={shell.inspector.typography.style} items={styleItems(shell.inspector.typography.family)} missing={shell.inspector.typography.missing} name="font-style" onPick={(v: string) => setFontStyle(v)} />
+                    <Field value={shell.inspector.typography.size} name="font-size" onValue={setFontSize} variable={shell.inspector.vars["style/size"]} onVariable={(el: HTMLElement) => openBind(B.fontSize, el)} onDetach={() => bindField(B.fontSize, null)} />
+                  </div>
+                  <div class={GRID}>
+                    <div class={LABEL}>{Publr.t("Line height")}</div>
+                    <div class={LABEL}>{Publr.t("Letter spacing")}</div>
+                  </div>
+                  <div class={GRID}>
+                    <Field icon="line-height" value={shell.inspector.typography.lineHeight} text name="line-height" onText={(t: string) => setLineHeight(t)} variable={shell.inspector.vars["style/lineHeight"]} onVariable={(el: HTMLElement) => openBind(B.lineHeight, el)} onDetach={() => bindField(B.lineHeight, null)} />
+                    <Field icon="letter-spacing" value={shell.inspector.typography.letterSpacing} text name="letter-spacing" onText={(t: string) => setLetterSpacing(t)} variable={shell.inspector.vars["style/letterSpacing"]} onVariable={(el: HTMLElement) => openBind(B.letterSpacing, el)} onDetach={() => bindField(B.letterSpacing, null)} />
+                  </div>
+                </div>
+                <div class={LABEL}>{Publr.t("Alignment")}</div>
+                <div class={GRID}>
+                  <Seg items={TEXT_ALIGN} value={shell.inspector.typography.align} fill name="text-align" onPick={(k: string) => setTextAlign(k)} />
+                  <Seg items={TEXT_VALIGN} value={shell.inspector.typography.valign} fill name="text-valign" onPick={(k: string) => setTextValign(k)} />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger classes="flex h-6 w-6 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-bg-2)]">
+                      <PdIcon name="text-settings" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent size="xs" align="right" classes="w-[180px]">
+                      <div class="px-2 py-1 text-white/60">{Publr.t("Decoration")}</div>
+                      {DECORATION.map((d) => (
+                        <DropdownMenuItem key={d.value} size="xs" onClick={() => setTextStyle({ decoration: d.value })}>
+                          <span class="w-4">{shell.inspector!.typography!.decoration === d.value ? "✓" : ""}</span>
+                          <span class="flex-1">{d.label}</span>
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator size="xs" />
+                      <div class="px-2 py-1 text-white/60">{Publr.t("Case")}</div>
+                      {CASES.map((d) => (
+                        <DropdownMenuItem key={d.value} size="xs" onClick={() => setTextStyle({ case: d.value })}>
+                          <span class="w-4">{shell.inspector!.typography!.textCase === d.value ? "✓" : ""}</span>
+                          <span class="flex-1">{d.label}</span>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </Section>
+            )}
+            <Section
+              title={Publr.t("Fill")}
+              empty={shell.inspector.fills.length === 0}
+              actions={
+                <div class="flex items-center">
+                  {shell.inspector.fills.length > 0 && <IconButton icon="styles" title={Publr.t("Apply styles and variables")} onClick={(event: MouseEvent) => openBind(paintField("fills", 0), event.currentTarget as HTMLElement)} />}
+                  <IconButton icon="plus" title={Publr.t("Add fill")} onClick={() => addPaint("fills")} />
+                </div>
+              }
+            >
+              {shell.inspector.fills.map((p, k) => (
+                <Paint
+                  key={p.key}
+                  name={`fill-${k}`}
+                  swatch={p.swatch}
+                  label={p.label}
+                  opacity={p.opacity}
+                  visible={p.visible}
+                  style={p.style}
+                  solid={p.type === "solid" && !p.style}
+                  variable={p.variable}
+                  onVariable={(el: HTMLElement) => openBind(paintField("fills", k), el)}
+                  onDetach={() => bindField(paintField("fills", k), null)}
+                  onSwatch={(el: HTMLElement) => (p.variable ? openBind(paintField("fills", k), el) : openPicker("fills", k, el))}
+                  onHex={(t: string) => setPaintHex("fills", k, t)}
+                  onOpacity={paintOpacityEdit("fills", k)}
+                  onToggle={() => togglePaint("fills", k)}
+                  onRemove={() => removePaint("fills", k)}
+                  onDragStart={() => {
+                    dragging.list = "fills";
+                    dragging.index = k;
+                  }}
+                  onDrop={() => dragging.list === "fills" && movePaint("fills", dragging.index, k)}
+                />
+              ))}
+            </Section>
+            <Section
+              title={Publr.t("Stroke")}
+              empty={shell.inspector.strokes.length === 0}
+              actions={
+                <div class="flex items-center">
+                  {shell.inspector.strokes.length > 0 && <IconButton icon="styles" title={Publr.t("Apply styles and variables")} onClick={(event: MouseEvent) => openBind(paintField("strokes", 0), event.currentTarget as HTMLElement)} />}
+                  <IconButton icon="plus" title={Publr.t("Add stroke")} onClick={() => addPaint("strokes")} />
+                </div>
+              }
+            >
+              {shell.inspector.strokes.map((p, k) => (
+                <Paint
+                  key={p.key}
+                  name={`stroke-${k}`}
+                  swatch={p.swatch}
+                  label={p.label}
+                  opacity={p.opacity}
+                  visible={p.visible}
+                  style={p.style}
+                  solid={p.type === "solid" && !p.style}
+                  variable={p.variable}
+                  onVariable={(el: HTMLElement) => openBind(paintField("strokes", k), el)}
+                  onDetach={() => bindField(paintField("strokes", k), null)}
+                  onSwatch={(el: HTMLElement) => (p.variable ? openBind(paintField("strokes", k), el) : openPicker("strokes", k, el))}
+                  onHex={(t: string) => setPaintHex("strokes", k, t)}
+                  onOpacity={paintOpacityEdit("strokes", k)}
+                  onToggle={() => togglePaint("strokes", k)}
+                  onRemove={() => removePaint("strokes", k)}
+                  onDragStart={() => {
+                    dragging.list = "strokes";
+                    dragging.index = k;
+                  }}
+                  onDrop={() => dragging.list === "strokes" && movePaint("strokes", dragging.index, k)}
+                />
+              ))}
+              <div class={GRID}>
+                <Choice label="Position" value={shell.inspector.strokeAlign} items={STROKE_ALIGN} name="stroke-align" onPick={(v: string) => setStroke({ align: v })} />
+                <Field icon="line-height" value={shell.inspector.strokeWeight} name="stroke-weight" disabled={shell.inspector.strokeSides === "custom"} onValue={strokeWeight} variable={shell.inspector.vars["stroke/weight"]} onVariable={(el: HTMLElement) => openBind(B.strokeWeight, el)} onDetach={() => bindField(B.strokeWeight, null)} />
+                {shell.inspector.strokeSidesApply ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger classes="flex h-6 w-6 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-bg-2)]">
+                      <PdIcon name="pad-sides" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent size="xs" align="right" classes="w-[140px]">
+                      {STROKE_SIDES.map((d) => (
+                        <DropdownMenuItem key={d.value} size="xs" onClick={() => setStrokeSides(d.value as "all")}>
+                          <span class="w-4">{shell.inspector!.strokeSides === d.value ? "✓" : ""}</span>
+                          <span class="flex-1">{d.label}</span>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  <span></span>
+                )}
+              </div>
+              {shell.inspector.strokeSides === "custom" && (
+                <div class="grid grid-cols-[88px_88px] grid-rows-[24px_24px] items-center gap-x-2 gap-y-2" data-pd-stroke-sides>
+                  <Field label="T" value={shell.inspector.strokeSideWeights[0]} name="stroke-top" onValue={strokeSideEdit(0)} />
+                  <Field label="R" value={shell.inspector.strokeSideWeights[1]} name="stroke-right" onValue={strokeSideEdit(1)} />
+                  <Field label="B" value={shell.inspector.strokeSideWeights[2]} name="stroke-bottom" onValue={strokeSideEdit(2)} />
+                  <Field label="L" value={shell.inspector.strokeSideWeights[3]} name="stroke-left" onValue={strokeSideEdit(3)} />
+                </div>
+              )}
+            </Section>
+            <Section
+              title={Publr.t("Effects")}
+              empty={shell.inspector.effects.length === 0}
+              actions={
+                <div class="flex items-center">
+                  {shell.inspector.effects.length > 0 && <IconButton icon="styles" title={Publr.t("Apply styles")} />}
+                  <IconButton icon="plus" title={Publr.t("Add effect")} onClick={() => addEffect()} />
+                </div>
+              }
+            >
+              {shell.inspector.effectStyle && shell.inspector.effects.length > 0 && (
+                <div class="grid grid-cols-[24px_128px_24px_24px] items-center gap-x-1" data-pd-effect-style={shell.inspector.effectStyle}>
+                  <span class="flex h-6 w-6 items-center justify-center text-[var(--pd-icon)]">
+                    <PdIcon name={shell.inspector.effects[0].icon === "effect-blur" ? "effect-blur" : "effect-shadow"} />
+                  </span>
+                  <div class="group/style flex h-6 min-w-0 items-center rounded-[5px] bg-[var(--pd-bg-2)] pl-2" title={shell.inspector.effectStyle}>
+                    <span class="min-w-0 flex-1 truncate">{shell.inspector.effectStyle}</span>
+                    <button type="button" class="hidden h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[var(--pd-icon)] group-hover/style:flex" title={Publr.t("Detach style")} data-pd-style-detach onClick={() => detachStyle("effect")}>
+                      <PdIcon name="detach" />
+                    </button>
+                  </div>
+                  <span></span>
+                  <IconButton icon="minus" title={Publr.t("Remove")} onClick={() => removeEffects()} />
+                </div>
+              )}
+              {!shell.inspector.effectStyle && shell.inspector.effects.map((e, k) => (
+                <div key={e.key} class="flex flex-col gap-2" data-pd-effect={e.name}>
+                  <div class="grid grid-cols-[24px_128px_24px_24px] items-center gap-x-1">
+                    <IconButton icon={e.icon === "effect-blur" ? "effect-blur" : "effect-shadow"} title={Publr.t("Effect settings")} on={shell.effectOpen === k} onClick={() => (shell.effectOpen = shell.effectOpen === k ? -1 : k)} />
+                    <div class={e.visible ? "flex" : "flex opacity-40"}>
+                      <Choice label="Effect" value={e.name} items={EFFECT_TYPES} name={`effect-type-${k}`} onPick={(v: string) => setEffectType(k, v)} />
+                    </div>
+                    <IconButton icon={e.visible ? "eye" : "eye-off"} title={Publr.t("Show/Hide")} classes="ml-1" onClick={() => toggleEffect(k)} />
+                    <IconButton icon="minus" title={Publr.t("Remove")} onClick={() => removeEffect(k)} />
+                  </div>
+                  {shell.effectOpen === k && (
+                    <div class="flex flex-col gap-2 rounded-[5px] border border-[var(--pd-border)] p-2" data-pd-effect-settings>
+                      {e.shadow ? (
+                        <div class="flex flex-col gap-2">
+                          <div class="grid grid-cols-[80px_80px] gap-x-2">
+                            <Field label="X" value={e.x} name={`effect-x-${k}`} onValue={effectEdit(k, "x")} />
+                            <Field label="Y" value={e.y} name={`effect-y-${k}`} onValue={effectEdit(k, "y")} />
+                          </div>
+                          <div class="grid grid-cols-[80px_80px] gap-x-2">
+                            <Field icon="effect-blur" value={e.radius} title={Publr.t("Blur")} name={`effect-blur-${k}`} onValue={effectEdit(k, "radius")} />
+                            <Field icon="pad-sides" value={e.spread} title={Publr.t("Spread")} name={`effect-spread-${k}`} onValue={effectEdit(k, "spread")} />
+                          </div>
+                          <div class="grid grid-cols-[168px] items-center">
+                            <Paint
+                              bare
+                              name={`effect-color-${k}`}
+                              swatch={e.swatch}
+                              label={e.hex}
+                              opacity={e.alpha}
+                              visible
+                              style={false}
+                              onSwatch={(el: HTMLElement) => openPicker("effect", k, el)}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div class="grid grid-cols-[80px] gap-x-2">
+                          <Field icon="effect-blur" value={e.radius} title={Publr.t("Blur")} name={`effect-blur-${k}`} onValue={effectEdit(k, "radius")} />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </Section>
+            {shell.inspector.grids.length > 0 && (
+              <Section title={Publr.t("Layout guide")} actions={<IconButton icon="plus" title={Publr.t("Add layout guide")} />}>
+                {shell.inspector.grids.map((g) => (
+                  <div key={g.key} class="grid grid-cols-[156px_24px_24px] items-center gap-x-1">
+                    <div class="flex h-6 min-w-0 items-center rounded-[5px] bg-[var(--pd-bg-2)]">
+                      <PdIcon name="grid-columns" />
+                      <span class="min-w-0 flex-1 truncate pl-0.5">{g.name}</span>
+                    </div>
+                    <IconButton icon={g.visible ? "eye" : "eye-off"} title={Publr.t("Show/Hide")} classes="ml-1" />
+                    <IconButton icon="minus" title={Publr.t("Remove")} />
+                  </div>
+                ))}
+              </Section>
+            )}
+            <Section title={Publr.t("Export")} empty actions={<IconButton icon="plus" title={Publr.t("Add export")} />} />
+          </div>
+        ) : (
+          <div data-pd-inspector="page">
+            <Section title={Publr.t("Page")}>
+              <Paint
+                bare
+                name="page-background"
+                swatch={shell.pageBackground}
+                label={shell.pageBackgroundHex}
+                opacity="100"
+                visible
+                style={false}
+                solid
+                onSwatch={(el: HTMLElement) => openPicker("page", 0, el)}
+                onHex={(t: string) => {
+                  const hex = parseHex(t);
+                  if (hex) setPageBackground(hex);
+                }}
+              />
+            </Section>
+            <Section title={Publr.t("Variables")} name="variables">
+              <button type="button" class="flex h-6 w-[184px] items-center gap-1 rounded-[5px] bg-[var(--pd-bg-2)] pr-2 text-[11px] text-[var(--pd-text)] outline outline-1 -outline-offset-1 outline-transparent hover:outline-[var(--pd-border)]" data-pd-open-variables onClick={() => openVariables()}>
+                <PdIcon name="variables" />
+                <span class="truncate">{Publr.t("Open variables")}</span>
+              </button>
+            </Section>
+            <Section
+              title={Publr.t("Styles")}
+              empty={shell.styles.length === 0}
+              actions={<IconButton icon="plus" title={Publr.t("Create style")} />}
+              body="flex flex-col gap-[14px] pr-2 pb-4 pl-4"
+            >
+              {shell.styles.map((g) => (
+                <div key={g.key} class="flex flex-col" data-pd-styles={g.key}>
+                  <div class="mb-px flex h-8 items-center text-[var(--pd-text-2)]">{g.title}</div>
+                  {g.rows.map((r) => (
+                    <div
+                      key={r.key}
+                      class="-ml-2 flex h-[30px] min-w-0 cursor-default items-center gap-2 rounded-[5px] pr-2 pl-2 hover:bg-[var(--pd-bg-2)]"
+                      style={{ "padding-left": `${8 + r.depth * 12}px` }}
+                      onClick={() => (r.folder ? toggleStyleFolder(r.key) : undefined)}
+                      data-pd-style={r.name}
+                    >
+                      {r.folder ? (
+                        <span class={["flex h-4 w-4 shrink-0 items-center justify-center text-[var(--pd-text-2)]", r.open ? "rotate-90" : ""]}>
+                          <PdIcon name="chevron-right" size={20} classes="-m-0.5" />
+                        </span>
+                      ) : r.kind === "text" ? (
+                        <span class="flex h-4 w-4 shrink-0 items-center justify-center text-[13px] leading-4 font-[450]">Ag</span>
+                      ) : r.kind === "fill" ? (
+                        <span class="block h-4 w-4 shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(0,0,0,0.1)]" style={{ background: r.swatch }} data-pd-style-swatch></span>
+                      ) : (
+                        <span class="flex h-4 w-4 shrink-0 items-center justify-center">
+                          <PdIcon name={r.kind === "grid" ? "grid-columns" : r.effect.endsWith("shadow") || !r.effect ? "style-shadow" : "style-blur"} classes="-m-1" />
+                        </span>
+                      )}
+                      <span class="min-w-0 truncate">
+                        {r.name}
+                        {r.detail && <span class="text-[var(--pd-text-2)]">{` · ${r.detail}`}</span>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </Section>
+            <Section title={Publr.t("Export")} empty actions={<IconButton icon="plus" title={Publr.t("Add export")} />} />
+          </div>
+        )}
+      </div>
+      <PaintPicker />
+    </aside>
+  );
+}

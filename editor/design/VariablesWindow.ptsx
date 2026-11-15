@@ -1,0 +1,851 @@
+// The Variables window, after the editor's local variables. As a window it floats over
+// the canvas (moved by its header, sized by its corner): on the left the file's
+// collections and, under them, the shown collection's groups ("All variables" first).
+// Maximised it takes everything but the rail: on the left the file's name, Collections
+// (with their counts) and Groups ("All" and the whole tree, open); over the table the
+// collection's name, search with a type filter, minimise and Share. The table is the
+// same in both: a row a variable (its type, its name, a value a mode, the edit button
+// at the far right), a header row with the modes ("+" at the far right adds one),
+// group headers between the rows, "+ Create variable" at the bottom. Only the rows in
+// view are drawn. Values are typed in place, colours picked (a translucent colour's
+// opacity typed in its own pill), booleans switched, any value aliased to another
+// variable; the edit popover holds a variable's name, description, scopes, code syntax
+// and publishing. Every change is one undo step (variables.ts).
+import { Publr } from "publr-jsx";
+import { ColorPicker } from "../../../ui/src/components/ColorPicker/ColorPicker.ptsx";
+import { DropdownMenu } from "../../../ui/src/components/Dropdown/Dropdown.ptsx";
+import { DropdownMenuContent } from "../../../ui/src/components/Dropdown/DropdownMenuContent.ptsx";
+import { DropdownMenuContextArea } from "../../../ui/src/components/Dropdown/DropdownMenuContextArea.ptsx";
+import { DropdownMenuItem } from "../../../ui/src/components/Dropdown/DropdownMenuItem.ptsx";
+import { DropdownMenuSeparator } from "../../../ui/src/components/Dropdown/DropdownMenuSeparator.ptsx";
+import { DropdownMenuTrigger } from "../../../ui/src/components/Dropdown/DropdownMenuTrigger.ptsx";
+import { FloatingPanel } from "../../../ui/src/components/FloatingPanel/FloatingPanel.ptsx";
+import { IconButton } from "./IconButton.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import {
+  addMode,
+  clickVarRow,
+  closeEdit,
+  closeVariables,
+  contextVarRow,
+  createCollection,
+  createVariable,
+  deleteCollection,
+  deleteGroup,
+  deleteMode,
+  deleteSelected,
+  detachAlias,
+  duplicateCollection,
+  duplicateMode,
+  duplicateSelected,
+  editCode,
+  editDescription,
+  editName,
+  finishEditAlpha,
+  finishEditCell,
+  groupSelection,
+  makeDefaultMode,
+  collectionPointerDown,
+  moveMode,
+  openAlias,
+  openColor,
+  openEdit,
+  pickColor,
+  renameCollection,
+  renameGroup,
+  renameMode,
+  renameVar,
+  resizeColumn,
+  rowPointerDown,
+  selectedCount,
+  setQuery,
+  setTypeFilter,
+  showCollection,
+  showGroup,
+  startEditAlpha,
+  startEditCell,
+  startRenameCollection,
+  startRenameGroup,
+  startRenameMode,
+  startRenameVar,
+  tableScroller,
+  toggleAllScopes,
+  toggleBoolean,
+  toggleAllGroups,
+  toggleFull,
+  toggleGroup,
+  toggleHidden,
+  toggleScope,
+  toggleSearch,
+  toggleSide,
+  typedColorAlpha,
+  typedColorHex,
+  ungroup,
+  vars,
+  windowDrag,
+} from "./variables";
+import type { Cell, TypeFilter, VarRow, VarType } from "./variables";
+import type { PdIconName } from "./icons";
+import { shell } from "./store";
+
+/** What a right-click was on: a variable row, a mode, a collection, a group. */
+const menu = { row: "", mode: "", collection: "", group: "" };
+
+const TYPES: { type: VarType; label: string }[] = [
+  { type: "color", label: "Color" },
+  { type: "number", label: "Number" },
+  { type: "string", label: "String" },
+  { type: "boolean", label: "Boolean" },
+];
+
+/** A field that just opened takes the keys, its text selected (the window itself never
+ * scrolls to it: only the table does). */
+function focusInput(el: HTMLInputElement | null): void {
+  if (el)
+    requestAnimationFrame(() => {
+      el.focus({ preventScroll: true });
+      el.select();
+    });
+}
+
+/** Enter keeps the typed text, Escape the old one; both leave the field. */
+function typedKey(event: KeyboardEvent, done: (text: string | null) => void): void {
+  event.stopPropagation();
+  const input = event.currentTarget as HTMLInputElement;
+  if (event.key === "Enter") done(input.value);
+  if (event.key === "Escape") done(null);
+}
+
+const TYPE_ICON: Record<VarType, PdIconName> = { color: "var-color", number: "var-number", string: "var-string", boolean: "var-boolean" };
+
+/** A variable's type mark (a palette for colours, # for numbers, Aa, a switch): 14 px of
+ * art in a 16 px slot. */
+function TypeIcon({ type }: { type: VarType }) {
+  return (
+    <span class="flex h-4 w-4 shrink-0 items-center justify-center text-[var(--pd-icon)]">
+      <PdIcon name={TYPE_ICON[type]} classes="-m-1" />
+    </span>
+  );
+}
+
+function ValueCell({ row, cell }: { row: VarRow; cell: Cell }) {
+  return (
+    <div class="group/cell relative flex h-10 shrink-0 items-center border-r border-[var(--pd-border)] pr-2 pl-[9px]" style={{ width: `${vars.modeW}px` }} data-pd-cell={cell.mode}>
+      {cell.editing ? (
+        <input
+          class="h-7 w-full min-w-0 rounded-[5px] bg-[var(--pd-bg)] px-2 text-[11px] text-[var(--pd-text)] outline outline-1 -outline-offset-1 outline-[var(--pd-brand)]"
+          value={cell.text}
+          spellcheck={false}
+          ref={focusInput}
+          data-pd-cell-input
+          onKeyDown={(event: KeyboardEvent) => typedKey(event, (t) => finishEditCell(row.id, cell.mode, t))}
+          onBlur={(event: Event) => finishEditCell(row.id, cell.mode, (event.currentTarget as HTMLInputElement).value)}
+        />
+      ) : cell.kind === "alias" ? (
+        <div class="flex h-7 min-w-0 flex-1 items-center rounded-[5px] px-1 group-hover/cell:bg-[var(--pd-bg-2)]">
+          <button
+            type="button"
+            class="flex h-5 min-w-0 max-w-full items-center gap-1 rounded-[4px] bg-[var(--pd-bg-2)] pr-1.5 pl-1 text-[11px] text-[var(--pd-text)] outline outline-1 -outline-offset-1 outline-[var(--pd-border)] group-hover/cell:bg-[var(--pd-bg)]"
+            title={cell.text ? `${cell.aliasPath} = ${cell.text}` : cell.aliasPath}
+            data-pd-cell-value
+            data-pd-alias={cell.alias}
+            onClick={(event: MouseEvent) => openAlias(row.id, cell.mode, event.currentTarget as HTMLElement)}
+          >
+            {row.type === "color" && <span class="block h-3 w-3 shrink-0 rounded-[2px] shadow-[inset_0_0_0_1px_rgba(0,0,0,0.1)]" style={{ background: cell.swatch }}></span>}
+            <span class="truncate">{cell.alias}</span>
+          </button>
+          <span class="flex-1"></span>
+          {!vars.readOnly && (
+            <button type="button" class="hidden h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-3)] group-hover/cell:flex" title={Publr.t("Detach variable")} data-pd-detach-alias onClick={() => detachAlias(row.id, cell.mode)}>
+              <PdIcon name="detach" />
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          <div class="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-[5px] px-2 group-hover/cell:bg-[var(--pd-bg-2)]">
+            {cell.kind === "color" && (
+              <button type="button" class="flex h-4 w-4 shrink-0 items-center justify-center" title={Publr.t("Colour")} data-pd-cell-value data-pd-cell-swatch onClick={(event: MouseEvent) => openColor(row.id, cell.mode, event.currentTarget as HTMLElement)}>
+                <span class="relative block h-4 w-4 overflow-hidden rounded-[2px] bg-[conic-gradient(#e1e1e1_25%,#fff_0_50%,#e1e1e1_0_75%,#fff_0)] bg-[length:6px_6px] bg-[position:2px_0]">
+                  <span class="absolute inset-0" style={{ background: cell.swatch }}></span>
+                  {cell.alpha && <span class="absolute inset-y-0 left-0 w-2" style={{ background: cell.solid }}></span>}
+                  <span class="absolute inset-0 rounded-[2px] shadow-[inset_0_0_0_1px_rgba(0,0,0,0.1)]"></span>
+                </span>
+              </button>
+            )}
+            {cell.kind === "boolean" ? (
+              <button type="button" role="switch" aria-checked={cell.on} class={["relative ml-1 h-4 w-7 shrink-0 rounded-full", cell.on ? "bg-[var(--pd-brand)]" : "bg-[var(--pd-bg-3)]"]} data-pd-cell-value data-pd-cell-switch onClick={() => toggleBoolean(row.id, cell.mode)}>
+                <span class={["absolute top-0.5 h-3 w-3 rounded-full bg-white transition-[left]", cell.on ? "left-[14px]" : "left-0.5"]}></span>
+              </button>
+            ) : (
+              <button type="button" class={["min-w-0 flex-1 truncate text-left text-[11px] text-[var(--pd-text)]", cell.kind === "color" ? "uppercase" : ""]} data-pd-cell-value data-pd-cell-text onClick={() => startEditCell(row.id, cell.mode)}>
+                {cell.kind === "string" && !cell.text ? <span class="text-[var(--pd-text-3)]">{Publr.t("Empty")}</span> : cell.text}
+              </button>
+            )}
+            {cell.kind === "boolean" && <span class="flex-1 pl-1 text-[var(--pd-text-2)]">{cell.text}</span>}
+            {!vars.readOnly && (
+              <button type="button" class="hidden h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-3)] group-hover/cell:flex" title={Publr.t("Apply variable")} data-pd-alias-button onClick={(event: MouseEvent) => openAlias(row.id, cell.mode, event.currentTarget as HTMLElement)}>
+                <PdIcon name="variables" />
+              </button>
+            )}
+          </div>
+          {cell.alpha &&
+            (cell.alphaEditing ? (
+              <input
+                class="mr-[3px] ml-2 h-6 w-[88px] shrink-0 rounded-[5px] bg-[var(--pd-bg)] px-2 text-[11px] text-[var(--pd-text)] outline outline-1 -outline-offset-1 outline-[var(--pd-brand)]"
+                value={cell.alpha}
+                spellcheck={false}
+                ref={focusInput}
+                data-pd-alpha-input
+                onKeyDown={(event: KeyboardEvent) => typedKey(event, (t) => finishEditAlpha(row.id, cell.mode, t))}
+                onBlur={(event: Event) => finishEditAlpha(row.id, cell.mode, (event.currentTarget as HTMLInputElement).value)}
+              />
+            ) : (
+              <button type="button" class="mr-[3px] ml-2 flex h-6 w-[88px] shrink-0 items-center rounded-[5px] bg-[var(--pd-bg-2)] pr-2 text-left text-[11px] text-[var(--pd-text)]" title={Publr.t("Opacity")} data-pd-cell-value data-pd-cell-alpha onClick={() => startEditAlpha(row.id, cell.mode)}>
+                <PdIcon name="opacity" classes="text-[var(--pd-text-2)]" />
+                <span class="min-w-0 truncate pl-0.5">{cell.alpha}</span>
+              </button>
+            ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The table's width: the name, a column a mode, the end column (the edit buttons, "+"
+ * over them). The rows fill the table when it is wider. */
+const tableWidth = () => vars.nameW + vars.modes.length * vars.modeW + 40;
+
+function TableRow({ row }: { row: VarRow }) {
+  return row.kind === "group" ? (
+    <div class="absolute right-0 left-0 flex h-[57px] items-end border-b border-[var(--pd-border)] pb-3 text-[11px] text-[var(--pd-text)]" style={{ top: `${row.top}px` }} data-pd-var-group={row.id}>
+      <span class="sticky left-0 truncate pl-4">
+        {row.prefix && <span class="text-[var(--pd-text-2)]">{row.prefix}</span>}
+        <span class="font-[550]">{row.name}</span>
+      </span>
+    </div>
+  ) : (
+    <div
+      class={["group/row absolute left-0 flex h-[41px] min-w-full border-b border-[var(--pd-border)]", row.selected ? "bg-[var(--pd-select)]" : ""]}
+      style={{ top: `${row.top}px`, width: `${tableWidth()}px` }}
+      data-pd-var={row.id}
+      data-pd-var-name={row.name}
+      onClick={(event: MouseEvent) => clickVarRow(row.id, event)}
+      onContextMenu={() => {
+        menu.row = row.id;
+        contextVarRow(row.id);
+      }}
+      onPointerDown={(event: PointerEvent) => rowPointerDown(row.id, event)}
+    >
+      {row.dropAbove && <div class="pointer-events-none absolute top-[-1px] right-0 left-0 z-[2] h-0.5 bg-[var(--pd-brand)]"></div>}
+      {row.dropBelow && <div class="pointer-events-none absolute right-0 bottom-[-1px] left-0 z-[2] h-0.5 bg-[var(--pd-brand)]"></div>}
+      <div class={["sticky left-0 z-[1] flex h-10 shrink-0 items-center gap-3 border-r border-[var(--pd-border)] pr-2 pl-4", row.selected ? "bg-[var(--pd-select)]" : "bg-[var(--pd-bg)]"]} style={{ width: `${vars.nameW}px` }}>
+        <TypeIcon type={row.type} />
+        {row.renaming ? (
+          <input
+            class="-ml-1.5 h-7 min-w-0 flex-1 rounded-[5px] bg-[var(--pd-bg)] px-1.5 text-[11px] text-[var(--pd-text)] outline outline-1 -outline-offset-1 outline-[var(--pd-brand)]"
+            value={row.name}
+            spellcheck={false}
+            ref={focusInput}
+            data-pd-var-rename
+            onKeyDown={(event: KeyboardEvent) => typedKey(event, (t) => renameVar(row.id, t))}
+            onBlur={(event: Event) => renameVar(row.id, (event.currentTarget as HTMLInputElement).value)}
+          />
+        ) : (
+          <span class="min-w-0 flex-1 truncate text-[11px] text-[var(--pd-text)]" onDblClick={() => startRenameVar(row.id)}>
+            {row.name}
+          </span>
+        )}
+      </div>
+      {row.cells.map((c) => (
+        <ValueCell key={c.mode} row={row} cell={c} />
+      ))}
+      <div class="flex-1"></div>
+      <div class="flex h-10 w-10 shrink-0 items-center justify-center border-l border-[var(--pd-border)]">
+        <button
+          type="button"
+          class={["flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] group-hover/row:visible", vars.edit === row.id ? "visible bg-[var(--pd-bg-2)]" : "invisible"]}
+          title={Publr.t("Edit variable")}
+          data-pd-var-edit
+          onClick={(event: MouseEvent) => {
+            event.stopPropagation();
+            openEdit(row.id, event.currentTarget as HTMLElement);
+          }}
+        >
+          <PdIcon name="adjust" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const TYPE_FILTERS: { type: TypeFilter; label: string }[] = [
+  { type: "", label: "All types" },
+  { type: "color", label: "Color" },
+  { type: "number", label: "Number" },
+  { type: "string", label: "String" },
+  { type: "boolean", label: "Boolean" },
+];
+
+/** The right-click menu on a collection, and the Collections header's options. */
+function CollectionMenuItems() {
+  return (
+    <>
+      <DropdownMenuItem size="xs" onClick={() => startRenameCollection(menu.collection)}>
+        {Publr.t("Rename collection")}
+      </DropdownMenuItem>
+      <DropdownMenuItem size="xs" onClick={() => duplicateCollection(menu.collection)}>
+        {Publr.t("Duplicate collection")}
+      </DropdownMenuItem>
+      <DropdownMenuSeparator size="xs" />
+      <DropdownMenuItem size="xs" onClick={() => deleteCollection(menu.collection)}>
+        {Publr.t("Delete collection")}
+      </DropdownMenuItem>
+    </>
+  );
+}
+
+function CollectionRename({ id, name, classes }: { id: string; name: string; classes: string }) {
+  return (
+    <input
+      class={["h-6 w-full rounded-[5px] bg-[var(--pd-bg)] px-1 text-[11px] outline outline-1 -outline-offset-1 outline-[var(--pd-brand)]", classes]}
+      value={name}
+      ref={focusInput}
+      data-pd-collection-rename
+      onKeyDown={(event: KeyboardEvent) => typedKey(event, (t) => renameCollection(id, t))}
+      onBlur={(event: Event) => renameCollection(id, (event.currentTarget as HTMLInputElement).value)}
+    />
+  );
+}
+
+function GroupRename({ path, name, pad }: { path: string; name: string; pad: number }) {
+  return (
+    <input
+      class="h-6 w-full rounded-[5px] bg-[var(--pd-bg)] px-2 text-[11px] outline outline-1 -outline-offset-1 outline-[var(--pd-brand)]"
+      style={{ "padding-left": `${pad}px` }}
+      value={name}
+      ref={focusInput}
+      data-pd-group-rename
+      onKeyDown={(event: KeyboardEvent) => typedKey(event, (t) => renameGroup(path, t))}
+      onBlur={(event: Event) => renameGroup(path, (event.currentTarget as HTMLInputElement).value)}
+    />
+  );
+}
+
+function GroupMenuItems() {
+  return (
+    <>
+      <DropdownMenuItem size="xs" disabled={vars.readOnly} onClick={() => startRenameGroup(menu.group)}>
+        {Publr.t("Rename group")}
+      </DropdownMenuItem>
+      <DropdownMenuItem size="xs" disabled={vars.readOnly} onClick={() => ungroup(menu.group)}>
+        {Publr.t("Ungroup")}
+      </DropdownMenuItem>
+      <DropdownMenuSeparator size="xs" />
+      <DropdownMenuItem size="xs" disabled={vars.readOnly} onClick={() => deleteGroup(menu.group)}>
+        {Publr.t("Delete group")}
+      </DropdownMenuItem>
+    </>
+  );
+}
+
+/** Maximised, the left side: the file's name and the panel button, then Collections
+ * (each with its count) and Groups ("All" and the whole tree, open). */
+function FullSide() {
+  return (
+    <aside class="flex w-[281px] shrink-0 flex-col border-r border-[var(--pd-border)]" data-pd-vars-side>
+      <header class="flex h-[49px] shrink-0 items-center border-b border-[var(--pd-border)] pr-3 pl-4">
+        <span class="min-w-0 flex-1 truncate text-[13px] font-[550]" data-pd-vars-file>
+          {shell.fileName}
+        </span>
+        <IconButton icon="sidebar" title={Publr.t("Hide sidebar")} onClick={() => toggleSide()} />
+      </header>
+      <div class="flex h-10 shrink-0 items-center gap-0.5 pr-2 pl-4">
+        <h2 class="flex-1 text-[11px] font-[550]">{Publr.t("Collections")}</h2>
+        <DropdownMenu>
+          <DropdownMenuTrigger label={Publr.t("Collection options")} classes="flex h-6 w-6 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-bg-2)]">
+            <span class="flex" onPointerDown={() => (menu.collection = vars.collection)} data-pd-collection-options>
+              <PdIcon name="adjust" />
+            </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent size="xs" classes="w-[200px]">
+            <CollectionMenuItems />
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <IconButton icon="plus" title={Publr.t("Create collection")} onClick={() => createCollection()} />
+      </div>
+      <DropdownMenu classes="block shrink-0">
+        <DropdownMenuContextArea>
+          <div data-pd-scroll class="relative max-h-[40vh] overflow-y-auto border-b border-[var(--pd-border)] pb-2" data-pd-collections>
+            {vars.colDrop >= 0 && <div class="pointer-events-none absolute right-2 left-2 h-0.5 rounded-full bg-[var(--pd-brand)]" style={{ top: `${vars.colDrop - 1}px` }}></div>}
+            {vars.collections.map((c) => (
+              <div key={c.id} class="h-8 pt-1 pr-[7px] pl-[11px]" data-pd-collection-row={c.id} onContextMenu={() => (menu.collection = c.id)}>
+                {c.renaming ? (
+                  <CollectionRename id={c.id} name={c.name} classes="" />
+                ) : (
+                  <button
+                    type="button"
+                    class={["flex h-6 w-full items-center rounded-[5px] pr-2 pl-1 text-left", c.selected ? "bg-[var(--pd-bg-2)] font-[550]" : "hover:bg-[var(--pd-bg-2)]"]}
+                    data-pd-collection={c.name}
+                    onPointerDown={(event: PointerEvent) => collectionPointerDown(c.id, event)}
+                    onClick={() => showCollection(c.id)}
+                    onDblClick={() => startRenameCollection(c.id)}
+                  >
+                    <span class="min-w-0 flex-1 truncate">{c.name}</span>
+                    <span class="pl-2 font-normal text-[var(--pd-text-2)]">{c.count}</span>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </DropdownMenuContextArea>
+        <DropdownMenuContent align="pointer" size="xs" classes="w-[200px]">
+          <CollectionMenuItems />
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <div class="flex h-10 shrink-0 items-center pr-2 pl-4">
+        <h2 class="flex-1 text-[11px] font-[550]">{Publr.t("Groups")}</h2>
+        <IconButton icon="collapse-all" title={Publr.t("Collapse or expand all groups")} onClick={() => toggleAllGroups()} />
+      </div>
+      <DropdownMenu classes="flex min-h-0 flex-1 flex-col">
+        <DropdownMenuContextArea classes="flex min-h-0 flex-1 flex-col">
+          <div data-pd-scroll class="min-h-0 flex-1 overflow-y-auto pb-2" data-pd-groups>
+            {vars.collections.length > 0 && (
+              <div class="h-8 pt-1 pr-[10px] pl-[10px]">
+                <button type="button" class={["flex h-6 w-full items-center rounded-[5px] pr-[6px] pl-[6px] text-left", vars.group === "" ? "bg-[var(--pd-select)] font-[550]" : "hover:bg-[var(--pd-bg-2)]"]} data-pd-group="" onClick={() => showGroup("")}>
+                  <span class="min-w-0 flex-1 truncate">{Publr.t("All")}</span>
+                  <span class="pl-2 font-normal text-[var(--pd-text-2)]">{vars.allCount}</span>
+                </button>
+              </div>
+            )}
+            {vars.groups.map((g) => (
+              <div key={g.key} class="h-8 pt-1 pr-[10px] pl-[10px]" onContextMenu={() => (menu.group = g.path)}>
+                {g.renaming ? (
+                  <GroupRename path={g.path} name={g.name} pad={14 + g.depth * 16} />
+                ) : (
+                  <button
+                    type="button"
+                    class={["group/g relative flex h-6 w-full items-center rounded-[5px] pr-[6px] text-left", g.selected ? "bg-[var(--pd-select)] font-[550]" : "hover:bg-[var(--pd-bg-2)]"]}
+                    style={{ "padding-left": `${14 + g.depth * 16}px` }}
+                    data-pd-group={g.path}
+                    onClick={() => showGroup(g.path)}
+                    onDblClick={() => startRenameGroup(g.path)}
+                  >
+                    {g.folder && (
+                      <span
+                        class={["absolute top-1 flex h-4 w-4 items-center justify-center text-[var(--pd-text-2)] group-hover/g:visible", g.open ? "invisible rotate-90" : ""]}
+                        style={{ left: `${g.depth * 16 - 2}px` }}
+                        data-pd-group-toggle={g.path}
+                        onClick={(event: MouseEvent) => toggleGroup(g.path, event)}
+                      >
+                        <PdIcon name="chevron-right" size={16} />
+                      </span>
+                    )}
+                    <span class="min-w-0 flex-1 truncate">{g.name}</span>
+                    <span class="pl-2 font-normal text-[var(--pd-text-2)]">{g.count}</span>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </DropdownMenuContextArea>
+        <DropdownMenuContent align="pointer" size="xs" classes="w-[200px]">
+          <GroupMenuItems />
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </aside>
+  );
+}
+
+/** The window's left side: Collections, then "All variables" and the group tree. */
+function WindowSide() {
+  return (
+    <aside class="flex w-[240px] shrink-0 flex-col border-r border-[var(--pd-border)]" data-pd-vars-side>
+      <header class="flex h-12 shrink-0 cursor-default items-center pr-2 pl-4" onPointerDown={(event: PointerEvent) => windowDrag("move", event)}>
+        <h2 class="flex-1 text-[13px] font-[550]">{Publr.t("Collections")}</h2>
+        <IconButton icon="plus" title={Publr.t("Create collection")} onClick={() => createCollection()} />
+      </header>
+      <DropdownMenu classes="block shrink-0">
+        <DropdownMenuContextArea>
+          <div data-pd-scroll class="relative max-h-[320px] overflow-y-auto pb-2" data-pd-collections>
+            {vars.colDrop >= 0 && <div class="pointer-events-none absolute right-2 left-2 h-0.5 rounded-full bg-[var(--pd-brand)]" style={{ top: `${vars.colDrop - 1}px` }}></div>}
+            {vars.collections.map((c) => (
+              <div key={c.id} class="px-2" data-pd-collection-row={c.id} onContextMenu={() => (menu.collection = c.id)}>
+                {c.renaming ? (
+                  <CollectionRename id={c.id} name={c.name} classes="h-8 px-2" />
+                ) : (
+                  <button
+                    type="button"
+                    class={["flex h-8 w-full items-center rounded-[5px] px-2 text-left", c.selected ? "bg-[var(--pd-bg-2)] font-[550]" : "hover:bg-[var(--pd-bg-2)]"]}
+                    data-pd-collection={c.name}
+                    onPointerDown={(event: PointerEvent) => collectionPointerDown(c.id, event)}
+                    onClick={() => showCollection(c.id)}
+                    onDblClick={() => startRenameCollection(c.id)}
+                  >
+                    <span class="min-w-0 flex-1 truncate">{c.name}</span>
+                    <span class="pl-2 font-normal text-[var(--pd-text-2)]">{c.count}</span>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </DropdownMenuContextArea>
+        <DropdownMenuContent align="pointer" size="xs" classes="w-[200px]">
+          <CollectionMenuItems />
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <span class="mx-4 h-px shrink-0 bg-[var(--pd-border)]"></span>
+      <DropdownMenu classes="flex min-h-0 flex-1 flex-col">
+        <DropdownMenuContextArea classes="flex min-h-0 flex-1 flex-col">
+          <div data-pd-scroll class="min-h-0 flex-1 overflow-y-auto py-2" data-pd-groups>
+            {vars.collections.length > 0 && (
+              <div class="px-2">
+                <button type="button" class={["flex h-8 w-full items-center rounded-[5px] pr-2 pl-2 text-left", vars.group === "" ? "bg-[var(--pd-bg-2)] font-[550]" : "hover:bg-[var(--pd-bg-2)]"]} data-pd-group="" onClick={() => showGroup("")}>
+                  <span class="min-w-0 flex-1 truncate">{Publr.t("All variables")}</span>
+                  <span class="pl-2 text-[var(--pd-text-2)]">{vars.allCount}</span>
+                </button>
+              </div>
+            )}
+            {vars.groups.map((g) => (
+              <div key={g.key} class="px-2" onContextMenu={() => (menu.group = g.path)}>
+                {g.renaming ? (
+                  <GroupRename path={g.path} name={g.name} pad={8 + g.depth * 16} />
+                ) : (
+                  <button
+                    type="button"
+                    class={["flex h-8 w-full items-center rounded-[5px] pr-2 text-left", g.selected ? "bg-[var(--pd-bg-2)] font-[550]" : "hover:bg-[var(--pd-bg-2)]"]}
+                    style={{ "padding-left": `${g.depth * 16}px` }}
+                    data-pd-group={g.path}
+                    onClick={() => showGroup(g.path)}
+                    onDblClick={() => startRenameGroup(g.path)}
+                  >
+                    <span class={["flex h-6 w-4 shrink-0 items-center justify-center text-[var(--pd-text-2)]", g.open ? "rotate-90" : ""]} data-pd-group-toggle={g.path} onClick={(event: MouseEvent) => (g.folder ? toggleGroup(g.path, event) : undefined)}>
+                      {g.folder && <PdIcon name="chevron-right" size={20} classes="-m-0.5" />}
+                    </span>
+                    <span class="min-w-0 flex-1 truncate pl-1">{g.name}</span>
+                    <span class="pl-2 text-[var(--pd-text-2)]">{g.count}</span>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </DropdownMenuContextArea>
+        <DropdownMenuContent align="pointer" size="xs" classes="w-[200px]">
+          <GroupMenuItems />
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </aside>
+  );
+}
+
+/** Maximised, the table's top bar: the collection's name; search with the type filter,
+ * minimise, Share. */
+function FullBar() {
+  return (
+    <header class="flex h-[49px] shrink-0 items-center border-b border-[var(--pd-border)] pr-2 pl-5" data-pd-vars-bar>
+      {!vars.side && <IconButton icon="sidebar" title={Publr.t("Show sidebar")} classes="-ml-3 mr-1" onClick={() => toggleSide()} />}
+      <h2 class="min-w-0 flex-1 truncate text-[13px] font-[550]" data-pd-vars-title>
+        {vars.collectionName}
+      </h2>
+      <div class="flex h-6 w-[200px] shrink-0 items-center overflow-hidden rounded-[5px]">
+        <label class="flex h-6 min-w-0 flex-1 items-center rounded-l-[5px] bg-[var(--pd-bg-2)] outline outline-1 -outline-offset-1 outline-transparent focus-within:outline-[var(--pd-brand)]">
+          <PdIcon name="search" classes="text-[var(--pd-text-2)]" />
+          <input class="h-6 min-w-0 flex-1 bg-transparent pr-2 text-[11px] outline-none placeholder:text-[var(--pd-text-3)]" placeholder={Publr.t("Search")} value={vars.query} data-pd-vars-search onInput={(event: Event) => setQuery((event.currentTarget as HTMLInputElement).value)} onKeyDown={(event: KeyboardEvent) => {
+            event.stopPropagation();
+            if (event.key === "Escape") {
+              if (vars.query) setQuery("");
+              else (event.currentTarget as HTMLInputElement).blur();
+            }
+          }} />
+        </label>
+        <DropdownMenu classes="ml-px flex">
+          <DropdownMenuTrigger label={Publr.t("Filter by type")} classes={["flex h-6 w-6 items-center justify-center rounded-r-[5px] bg-[var(--pd-bg-2)] hover:bg-[var(--pd-bg-3)] aria-expanded:bg-[var(--pd-bg-3)]", vars.typeFilter ? "text-[var(--pd-brand)]" : "text-[var(--pd-icon)]"].join(" ")}>
+            <span class="flex" data-pd-type-filter>
+              <PdIcon name="filter" />
+            </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent size="xs" align="right" classes="w-[160px]">
+            {TYPE_FILTERS.map((f) => (
+              <DropdownMenuItem key={f.type || "all"} size="xs" onClick={() => setTypeFilter(f.type)}>
+                <span class="flex w-4 items-center justify-center">{vars.typeFilter === f.type && <PdIcon name="check" size={16} />}</span>
+                <span class="flex-1" data-pd-filter-type={f.type || "all"}>
+                  {Publr.t(f.label)}
+                </span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <IconButton icon="shrink" title={Publr.t("Minimise")} classes="ml-3" onClick={() => toggleFull()} />
+      <button type="button" class="ml-[14px] h-[30px] shrink-0 rounded-[5px] bg-[var(--pd-brand)] px-3 text-[11px] font-[550] text-white" data-pd-button="share">
+        {Publr.t("Share")}
+      </button>
+    </header>
+  );
+}
+
+export function VariablesWindow() {
+  return (
+    <div data-pd-vars-root>
+      {vars.open && (
+        <div
+          data-pd-vars
+          data-pd-vars-full={vars.full ? "" : undefined}
+          role="dialog"
+          aria-label={Publr.t("Variables")}
+          tabindex={-1}
+          class={[
+            "fixed z-40 flex flex-col overflow-clip bg-[var(--pd-bg)] text-[11px] text-[var(--pd-text)] outline-none",
+            vars.full ? "" : "rounded-[13px] border border-[var(--pd-border)] shadow-[0_2px_5px_rgba(0,0,0,0.15),0_10px_16px_rgba(0,0,0,0.12),0_0_0.5px_rgba(0,0,0,0.15)]",
+          ]}
+          style={vars.full ? { left: `${vars.x}px`, top: `${vars.y}px`, right: "0px", bottom: "0px" } : { left: `${vars.x}px`, top: `${vars.y}px`, width: `${vars.winW}px`, height: `${vars.winH}px` }}
+        >
+          <div class="flex min-h-0 flex-1">
+            {vars.full ? vars.side && <FullSide /> : <WindowSide />}
+            <section class="flex min-w-0 flex-1 flex-col" data-pd-vars-main>
+              {vars.full ? (
+                <FullBar />
+              ) : (
+                <header class="flex h-12 shrink-0 cursor-default items-center gap-1 pr-2 pl-4" onPointerDown={(event: PointerEvent) => windowDrag("move", event)}>
+                  <h2 class="min-w-0 flex-1 truncate text-[13px] font-[550]" data-pd-vars-title>
+                    {vars.collectionName}
+                  </h2>
+                  {vars.searching ? (
+                    <label class="flex h-7 w-[200px] items-center rounded-[5px] bg-[var(--pd-bg-2)] outline outline-1 -outline-offset-1 outline-transparent focus-within:outline-[var(--pd-brand)]">
+                      <PdIcon name="search" classes="text-[var(--pd-text-2)]" />
+                      <input class="h-7 min-w-0 flex-1 bg-transparent pr-2 text-[11px] outline-none placeholder:text-[var(--pd-text-3)]" placeholder={Publr.t("Search")} value={vars.query} ref={focusInput} data-pd-vars-search onInput={(event: Event) => setQuery((event.currentTarget as HTMLInputElement).value)} onKeyDown={(event: KeyboardEvent) => {
+                        event.stopPropagation();
+                        if (event.key === "Escape") toggleSearch();
+                      }} />
+                    </label>
+                  ) : (
+                    <IconButton icon="search" title={Publr.t("Search")} onClick={() => toggleSearch()} />
+                  )}
+                  <IconButton icon="expand" title={Publr.t("Maximise")} onClick={() => toggleFull()} />
+                  <IconButton icon="close" title={Publr.t("Close")} onClick={() => closeVariables()} />
+                </header>
+              )}
+              {vars.collections.length === 0 ? (
+                <div class="flex flex-1 flex-col items-center justify-center gap-3 text-[var(--pd-text-2)]" data-pd-vars-none>
+                  <span>{Publr.t("Variables live in collections. Create one to start.")}</span>
+                  <button type="button" class="h-8 rounded-[5px] bg-[var(--pd-brand)] px-3 text-[11px] font-[550] text-white" onClick={() => createCollection()}>
+                    {Publr.t("Create collection")}
+                  </button>
+                </div>
+              ) : (
+                <DropdownMenu classes="flex min-h-0 flex-1 flex-col">
+                  <DropdownMenuContextArea classes="flex min-h-0 flex-1 flex-col">
+                    <div ref={tableScroller} data-pd-scroll data-pd-vars-table class="relative min-h-0 flex-1 overflow-auto">
+                      <div class="sticky top-0 z-10 flex h-[41px] min-w-full border-b border-[var(--pd-border)] bg-[var(--pd-bg)] font-[550] text-[var(--pd-text)]" style={{ width: `${tableWidth()}px` }} data-pd-vars-head onContextMenu={(event: MouseEvent) => event.stopPropagation()}>
+                        <div class="sticky left-0 z-[1] flex shrink-0 items-center border-r border-[var(--pd-border)] bg-[var(--pd-bg)] pl-4" style={{ width: `${vars.nameW}px` }}>
+                          {Publr.t("Name")}
+                          <span class="absolute top-0 right-[-3px] bottom-0 w-[5px] cursor-col-resize hover:bg-[var(--pd-brand)]" onPointerDown={(event: PointerEvent) => resizeColumn("name", event)}></span>
+                        </div>
+                        {vars.modes.map((m, k) => (
+                          <div key={m.id} class="relative flex shrink-0 items-center border-r border-[var(--pd-border)] pr-2 pl-3" style={{ width: `${vars.modeW}px` }} data-pd-mode={m.name}>
+                            {m.renaming ? (
+                              <input
+                                class="h-7 w-full rounded-[5px] bg-[var(--pd-bg)] px-2 text-[11px] font-normal text-[var(--pd-text)] outline outline-1 -outline-offset-1 outline-[var(--pd-brand)]"
+                                value={m.name}
+                                ref={focusInput}
+                                data-pd-mode-rename
+                                onKeyDown={(event: KeyboardEvent) => typedKey(event, (t) => renameMode(m.id, t))}
+                                onBlur={(event: Event) => renameMode(m.id, (event.currentTarget as HTMLInputElement).value)}
+                              />
+                            ) : (
+                              <DropdownMenu classes="flex min-w-0 flex-1">
+                                <DropdownMenuTrigger classes="group/mode flex h-7 min-w-0 flex-1 items-center rounded-[5px] px-2 text-left hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-bg-2)]">
+                                  <span class="min-w-0 truncate" onDblClick={() => startRenameMode(m.id)}>
+                                    {m.name}
+                                  </span>
+                                  <span class="flex-1"></span>
+                                  <PdIcon name="chevron-down" size={20} classes="invisible -mr-1 group-hover/mode:visible" />
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent size="xs" classes="w-[200px]">
+                                  <DropdownMenuItem size="xs" disabled={vars.readOnly} onClick={() => startRenameMode(m.id)}>
+                                    {Publr.t("Rename mode")}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem size="xs" disabled={vars.readOnly} onClick={() => duplicateMode(m.id)}>
+                                    {Publr.t("Duplicate mode")}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem size="xs" disabled={vars.readOnly || m.first} onClick={() => makeDefaultMode(m.id)}>
+                                    {Publr.t("Set as default mode")}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem size="xs" disabled={vars.readOnly || k === 0} onClick={() => moveMode(m.id, k - 1)}>
+                                    {Publr.t("Move left")}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem size="xs" disabled={vars.readOnly || k === vars.modes.length - 1} onClick={() => moveMode(m.id, k + 1)}>
+                                    {Publr.t("Move right")}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator size="xs" />
+                                  <DropdownMenuItem size="xs" disabled={vars.readOnly || vars.modes.length <= 1} onClick={() => deleteMode(m.id)}>
+                                    {Publr.t("Delete mode")}
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                            <span class="absolute top-0 right-[-3px] bottom-0 z-[2] w-[5px] cursor-col-resize hover:bg-[var(--pd-brand)]" onPointerDown={(event: PointerEvent) => resizeColumn("mode", event)}></span>
+                          </div>
+                        ))}
+                        <div class="flex-1"></div>
+                        <div class="flex w-10 shrink-0 items-center justify-center border-l border-[var(--pd-border)]">
+                          {!vars.readOnly && <IconButton icon="plus" title={Publr.t("Add mode")} onClick={() => addMode()} />}
+                        </div>
+                      </div>
+                      <div class="relative min-w-full" style={{ height: `${vars.height}px`, width: `${tableWidth()}px` }} data-pd-vars-body>
+                        {vars.rows.map((row) => (
+                          <TableRow key={row.key} row={row} />
+                        ))}
+                        {vars.empty && (vars.query || vars.typeFilter) && <div class="absolute top-0 left-0 flex h-10 items-center pl-4 text-[var(--pd-text-2)]">{Publr.t("No variables match")}</div>}
+                      </div>
+                      {!vars.readOnly && (
+                        <div class="sticky bottom-0 left-0 z-10 flex h-10 w-full items-center border-t border-[var(--pd-border)] bg-[var(--pd-bg)] pl-2" data-pd-vars-foot>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger classes="flex h-8 items-center gap-[6px] rounded-[5px] pr-2 pl-1 text-[11px] text-[var(--pd-text)] hover:bg-[var(--pd-bg-2)] aria-expanded:bg-[var(--pd-bg-2)]">
+                              <span data-pd-create-variable class="flex items-center gap-[6px]">
+                                <PdIcon name="plus" />
+                                {Publr.t("Create variable")}
+                              </span>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent size="xs" classes="w-[160px]">
+                              {TYPES.map((t) => (
+                                <DropdownMenuItem key={t.type} size="xs" onClick={() => createVariable(t.type)}>
+                                  <span class="flex w-5 items-center justify-center">
+                                    <PdIcon name={TYPE_ICON[t.type]} size={20} classes="-m-0.5" />
+                                  </span>
+                                  <span class="flex-1" data-pd-create-type={t.type}>
+                                    {Publr.t(t.label)}
+                                  </span>
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      )}
+                    </div>
+                  </DropdownMenuContextArea>
+                  <DropdownMenuContent align="pointer" size="xs" classes="w-[220px]">
+                    <DropdownMenuItem size="xs" onClick={() => {
+                      const el = document.querySelector<HTMLElement>(`[data-pd-var="${CSS.escape(menu.row)}"] [data-pd-var-edit]`);
+                      if (el) openEdit(menu.row, el);
+                    }}>
+                      {Publr.t("Edit variable")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem size="xs" disabled={vars.readOnly} onClick={() => startRenameVar(menu.row)}>
+                      {Publr.t("Rename variable")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem size="xs" disabled={vars.readOnly} onClick={() => duplicateSelected()}>
+                      <span class="flex-1">{selectedCount() > 1 ? Publr.t("Duplicate variables") : Publr.t("Duplicate variable")}</span>
+                      <span class="opacity-60">⌘D</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem size="xs" disabled={vars.readOnly} onClick={() => groupSelection()}>
+                      {Publr.t("New group with selection")}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator size="xs" />
+                    <DropdownMenuItem size="xs" disabled={vars.readOnly} onClick={() => deleteSelected()}>
+                      <span class="flex-1">{selectedCount() > 1 ? Publr.t("Delete variables") : Publr.t("Delete variable")}</span>
+                      <span class="opacity-60">⌫</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </section>
+          </div>
+          {!vars.full && <span class="absolute right-0 bottom-0 h-3 w-3 cursor-nwse-resize" data-pd-vars-resize onPointerDown={(event: PointerEvent) => windowDrag("size", event)}></span>}
+        </div>
+      )}
+      {vars.edit && (
+        <FloatingPanel top={vars.editTop} left={vars.editLeft} width={240} label={Publr.t("Edit variable")} classes="!p-0">
+          <div data-pd-var-popover data-pd-scroll class="overflow-y-auto text-[11px]" style={{ "max-height": `${vars.editMax}px` }}>
+            <div class="flex h-10 items-center border-b border-[var(--pd-menu-line)] pr-2 pl-4 font-[550]">
+              <span class="flex-1">{Publr.t("Edit variable")}</span>
+              <button type="button" class="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-white/10" title={Publr.t("Close")} onClick={() => closeEdit()}>
+                <PdIcon name="close" />
+              </button>
+            </div>
+            <div class="flex flex-col gap-2 p-4">
+              <label class="text-white/60">{Publr.t("Name")}</label>
+              <input class="h-7 rounded-[5px] bg-white/10 px-2 text-white outline-none focus:outline focus:outline-1 focus:outline-[var(--pd-brand)]" value={vars.editName} data-pd-edit-name spellcheck={false} onKeyDown={(event: KeyboardEvent) => {
+                event.stopPropagation();
+                if (event.key === "Enter") (event.currentTarget as HTMLInputElement).blur();
+              }} onBlur={(event: Event) => editName((event.currentTarget as HTMLInputElement).value)} />
+              <label class="pt-1 text-white/60">{Publr.t("Description")}</label>
+              <textarea class="h-14 resize-none rounded-[5px] bg-white/10 px-2 py-1.5 text-white outline-none focus:outline focus:outline-1 focus:outline-[var(--pd-brand)]" value={vars.editDescription} data-pd-edit-description placeholder={Publr.t("Add a description")} onKeyDown={(event: KeyboardEvent) => event.stopPropagation()} onBlur={(event: Event) => editDescription((event.currentTarget as HTMLTextAreaElement).value)}></textarea>
+            </div>
+            {vars.editScopes.length > 0 && (
+              <div class="flex flex-col gap-1 border-t border-[var(--pd-menu-line)] px-4 py-3" data-pd-edit-scopes>
+                <div class="pb-1 font-[550]">{Publr.t("Scoping")}</div>
+                <ScopeCheck label={Publr.t("Show in all supported properties")} on={vars.editAll} indent={false} onToggle={() => toggleAllScopes()} />
+                {vars.editScopes.map((s) => (
+                  <ScopeCheck key={s.key} label={s.label} on={s.on} indent={s.indent} onToggle={() => toggleScope(s.key)} />
+                ))}
+              </div>
+            )}
+            <div class="flex flex-col gap-2 border-t border-[var(--pd-menu-line)] px-4 py-3" data-pd-edit-code>
+              <div class="flex h-6 items-center">
+                <span class="flex-1 font-[550]">{Publr.t("Code syntax")}</span>
+                {!vars.editCodeOpen && (
+                  <button type="button" class="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-white/10" title={Publr.t("Add code syntax")} onClick={() => (vars.editCodeOpen = true)}>
+                    <PdIcon name="plus" />
+                  </button>
+                )}
+              </div>
+              {vars.editCodeOpen &&
+                [
+                  { key: "web" as const, label: "Web" },
+                  { key: "android" as const, label: "Android" },
+                  { key: "ios" as const, label: "iOS" },
+                ].map((p) => (
+                  <div key={p.key} class="grid grid-cols-[56px_1fr] items-center gap-2">
+                    <span class="text-white/60">{p.label}</span>
+                    <input class="h-7 min-w-0 rounded-[5px] bg-white/10 px-2 font-mono text-[11px] text-white outline-none focus:outline focus:outline-1 focus:outline-[var(--pd-brand)]" value={vars.editCode[p.key]} spellcheck={false} data-pd-edit-code-input={p.key} onKeyDown={(event: KeyboardEvent) => {
+                      event.stopPropagation();
+                      if (event.key === "Enter") (event.currentTarget as HTMLInputElement).blur();
+                    }} onBlur={(event: Event) => editCode(p.key, (event.currentTarget as HTMLInputElement).value)} />
+                  </div>
+                ))}
+            </div>
+            <div class="border-t border-[var(--pd-menu-line)] px-4 py-3">
+              <ScopeCheck label={Publr.t("Hide from publishing")} on={vars.editHidden} indent={false} onToggle={() => toggleHidden()} />
+            </div>
+          </div>
+        </FloatingPanel>
+      )}
+      {vars.color && (
+        <FloatingPanel top={vars.colorTop} left={vars.colorLeft} width={248} label={Publr.t("Colour")} classes="!p-0">
+          <div data-pd-var-color>
+            <div class="flex h-10 items-center border-b border-[var(--pd-menu-line)] pr-2 pl-4 text-[11px] font-[550]">
+              <span class="flex-1">{Publr.t("Custom")}</span>
+              <button type="button" class="flex h-6 w-6 items-center justify-center rounded-[5px] hover:bg-white/10" title={Publr.t("Close")} onClick={() => (vars.color = false)}>
+                <PdIcon name="close" />
+              </button>
+            </div>
+            <div class="p-2">
+              <ColorPicker
+                hue={vars.hue}
+                saturation={vars.sat}
+                brightness={vars.bright}
+                alpha={vars.alpha}
+                hex={vars.hex}
+                onPick={(e: CustomEvent<{ hue: number; saturation: number; brightness: number; alpha: number; phase: "start" | "move" | "end" }>) => pickColor(e.detail.hue, e.detail.saturation, e.detail.brightness, e.detail.alpha, e.detail.phase)}
+                onHex={(e: CustomEvent<string>) => typedColorHex(e.detail)}
+                onAlpha={(e: CustomEvent<number>) => typedColorAlpha(e.detail)}
+              >
+                <span></span>
+              </ColorPicker>
+            </div>
+          </div>
+        </FloatingPanel>
+      )}
+    </div>
+  );
+}
+
+function ScopeCheck({ label, on, indent, onToggle }: { label: string; on: boolean; indent: boolean; onToggle: () => void }) {
+  return (
+    <button type="button" class={["flex h-6 items-center gap-2 text-left text-white", indent ? "pl-6" : ""]} data-pd-scope={label} onClick={() => onToggle()}>
+      <span class={["flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px]", on ? "bg-[var(--pd-brand)] text-white" : "outline outline-1 -outline-offset-1 outline-white/40"]}>{on && <PdIcon name="check" size={16} />}</span>
+      <span class="truncate">{label}</span>
+    </button>
+  );
+}

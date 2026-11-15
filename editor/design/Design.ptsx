@@ -1,0 +1,155 @@
+// The editor shell around the canvas, after Figma Design's layout: the rail and the left
+// panel (pages, layers, assets), the canvas (the viewer, with the shell's marks over it),
+// the right panel (the Design tab), and the toolbar floating at the bottom; the splash
+// covers it all while a file opens. Everything
+// the panels show comes from the shell's store (store.ts); the viewer opens the file and
+// draws it, unchanged.
+import { Publr } from "publr-jsx";
+import { route } from "../app/route";
+import { loading } from "../viewer/progress";
+import { state as viewerState, state as viewer, Viewer } from "../viewer/Viewer.ptsx";
+import { installIcons } from "./icons";
+import { LeftPanel } from "./LeftPanel.ptsx";
+import { PdIcon } from "./PdIcon.ptsx";
+import { RightPanel } from "./RightPanel.ptsx";
+import { SelectionMenu } from "./SelectionMenu.ptsx";
+import { Splash } from "./Splash.ptsx";
+import { actionKey } from "./actions";
+import { applyTheme, attachOverlay, canvasContext, followMarks, followViewer, onKey, shell } from "./store";
+import { Toolbar } from "./Toolbar.ptsx";
+import { VariablePicker } from "./VariablePicker.ptsx";
+import { VariablesWindow } from "./VariablesWindow.ptsx";
+import { MemoryWindow } from "./MemoryWindow.ptsx";
+import { FeatureRequests } from "./FeatureRequests.ptsx";
+import { vars, varsKey } from "./variables";
+import { viewerEditing, viewerStage } from "../viewer/Viewer.ptsx";
+import { ItemPanel } from "../system/ItemPanel.ptsx";
+import { SampleDialog, SampleMenuItems } from "../system/SampleDialog.ptsx";
+import { sys } from "../system/store";
+import { SystemPanel } from "../system/SystemPanel.ptsx";
+import { systemKey, SystemView } from "../system/SystemView.ptsx";
+import { summarize } from "../system/sample";
+import { followNames, followPages, pipStyle, ws } from "../system/workspace";
+import { PipChrome, ReferencePanel, TabBar } from "../system/Tabs.ptsx";
+
+export type DesignProps = {
+  workers?: number;
+  cacheMiB?: number;
+  gpu?: boolean;
+  /** Show the viewer's numbers (`?hud`). */
+  hud?: boolean;
+};
+
+const canvasArea = Publr.ref((el: HTMLElement) => {
+  attachOverlay(el);
+});
+
+/** A project's workspace on its design system's tab: the viewer is the reference, drawn
+ * picture-in-picture over the design system canvas. */
+const onSystemTab = () => !!route.system && route.tab === "system";
+
+let foundTimer = 0;
+
+export function Design(props: DesignProps) {
+  installIcons();
+  Publr.effect(() => followViewer());
+  Publr.effect(() => followMarks());
+  Publr.effect(() => {
+    void route.screen;
+    applyTheme();
+  });
+  Publr.effect(() => {
+    // In a project's workspace the canvas the person works in takes the keys: the
+    // design system or its reference on the first tab, the file on a file's tab.
+    void route.system;
+    void viewer.fileId;
+    const free = () => !route.system || route.tab === "file" || sys.focus === "free";
+    const s = viewerStage();
+    const ed = viewerEditing();
+    if (s) s.keys = free;
+    if (ed) ed.keys = free;
+  });
+  Publr.effect(() => {
+    // A tab shown gives its canvas the focus.
+    if (!route.system) return;
+    sys.focus = route.tab === "file" ? "free" : "system";
+  });
+  Publr.effect(() => followPages());
+  Publr.effect(() => followNames());
+  Publr.effect(() => {
+    // The reference's selection, summed up for the right panel (a moment after it
+    // settles).
+    const ids = [...shell.selection];
+    const on = onSystemTab() && sys.focus === "free" && sys.ready;
+    window.clearTimeout(foundTimer);
+    if (!on) return;
+    foundTimer = window.setTimeout(() => (sys.found = summarize(ids)), 120);
+  });
+  Publr.effect(() => {
+    // The menus' keys first (actions.ts), then the tools'; the design system's while it
+    // has the focus.
+    const keys = (e: KeyboardEvent) => {
+      if (onSystemTab() && sys.focus === "system") {
+        if (route.screen === "file") systemKey(e);
+        return;
+      }
+      // The Variables window takes the keys while the focus is in it.
+      const inVars = e.target instanceof Element && !!e.target.closest("[data-pd-vars-root], [data-pd-var-picker-root]");
+      if ((vars.open && inVars) || (e.key === "Escape" && (vars.edit !== "" || vars.color || vars.pick))) {
+        varsKey(e);
+        return;
+      }
+      if (!actionKey(e)) onKey(e);
+    };
+    window.addEventListener("keydown", keys);
+    return () => window.removeEventListener("keydown", keys);
+  });
+  return (
+    <div data-pd-shell class="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--pd-bg)] text-[var(--pd-text)]">
+      {route.system && <TabBar />}
+      <div data-pd-workspace class="relative flex min-h-0 flex-1">
+        {onSystemTab() ? <SystemPanel /> : !shell.uiHidden && <LeftPanel />}
+        {route.system && <SystemView />}
+        <main
+          data-pd-canvas
+          data-pd-pip={onSystemTab() ? (ws.pip.open && ws.reference.file ? "open" : "hidden") : undefined}
+          class={
+            onSystemTab()
+              ? ["absolute z-30 overflow-visible rounded-[10px] bg-[var(--pd-canvas)] shadow-[0_0_0_1px_var(--pd-border),0_8px_28px_rgba(0,0,0,0.22)]", sys.focus === "free" ? "outline outline-2 outline-[var(--pd-brand)]" : "", ws.pip.open && ws.reference.file ? "" : "pointer-events-none invisible"]
+              : "relative min-w-[600px] flex-1 overflow-hidden bg-[var(--pd-canvas)]"
+          }
+          style={onSystemTab() ? pipStyle() : ""}
+          onPointerDown={() => (sys.focus = "free")}
+        >
+          <div ref={canvasArea} class={onSystemTab() ? "absolute inset-x-0 top-8 bottom-0 overflow-hidden rounded-b-[10px]" : "absolute inset-0"}>
+            <SelectionMenu classes="absolute inset-0" extra={onSystemTab() ? <SampleMenuItems /> : undefined}>
+              <div class="absolute inset-0" onContextMenu={(event: MouseEvent) => canvasContext(event)}>
+                <Viewer workers={props.workers} cacheMiB={props.cacheMiB} gpu={props.gpu} chrome={props.hud === true} />
+              </div>
+            </SelectionMenu>
+          </div>
+          {viewerState.reimport && !onSystemTab() && (
+            <div role="status" data-pd-reimport class="absolute top-3 left-1/2 z-20 flex w-max max-w-[520px] -translate-x-1/2 items-start gap-2 rounded-[8px] bg-[var(--pd-bg)] px-3 py-2 text-[11px] leading-4 text-[var(--pd-text)] shadow-[var(--pd-toolbar-shadow)]">
+              <span>
+                {Publr.t("This file was imported by an earlier version of PublrDesign, so some images, texts or styles cannot show as they were made. Import the .fig file again to see it whole.")}
+              </span>
+              <button type="button" class="-my-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[var(--pd-icon)] hover:bg-[var(--pd-bg-2)]" title={Publr.t("Close")} onClick={() => (viewerState.reimport = false)}>
+                <PdIcon name="close" />
+              </button>
+            </div>
+          )}
+          {onSystemTab() && <PipChrome />}
+          {onSystemTab() && loading.shown && <Splash inline />}
+        </main>
+        {onSystemTab() ? sys.focus === "system" ? <ItemPanel /> : <ReferencePanel /> : !shell.uiHidden && <RightPanel />}
+        {!onSystemTab() && !shell.uiHidden && <Toolbar />}
+        {onSystemTab() && <SampleDialog />}
+      </div>
+      <VariablesWindow />
+      <MemoryWindow />
+      <FeatureRequests />
+      <VariablePicker />
+      {!onSystemTab() && loading.shown && <Splash />}
+    </div>
+  );
+}

@@ -1,0 +1,18 @@
+// A checkbox with its label, as the panel's "Clip content".
+import { PdIcon } from "./PdIcon.ptsx";
+
+export type CheckProps = { label: string; checked: boolean; onToggle?: () => void };
+
+export function Check({ label, checked, onToggle }: CheckProps) {
+  return (
+    <label class="flex h-6 cursor-default items-center gap-2 text-[11px] text-[var(--pd-text)]" data-pd-check={label} onClick={(event: MouseEvent) => {
+      event.preventDefault();
+      onToggle?.();
+    }}>
+      <span class={["flex h-4 w-4 items-center justify-center rounded-[3px]", checked ? "bg-[var(--pd-bg-2)] text-[var(--pd-text)] outline outline-1 -outline-offset-1 outline-[var(--pd-border)]" : "outline outline-1 -outline-offset-1 outline-[var(--pd-text-3)]"]}>
+        {checked && <PdIcon name="check" size={16} />}
+      </span>
+      {label}
+    </label>
+  );
+}
