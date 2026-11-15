@@ -1577,7 +1577,7 @@ test "shaping 1,000 characters is fast" {
     for (0..runs) |_| try t.run(text.items, &.{}, &out);
     const ns = start.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
     const per: i96 = @divTrunc(ns, runs);
-    if (@import("builtin").mode != .Debug) {
+    if (@import("builtin").mode != .debug) {
         std.debug.print("shape: {d} bytes in {d} us\n", .{ text.items.len, @divTrunc(per, 1000) });
         try testing.expect(per < 1_000_000);
     }

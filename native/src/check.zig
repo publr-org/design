@@ -29,7 +29,7 @@ pub fn gpucheck(io: Io, gpa: std.mem.Allocator, args: []const [:0]const u8) !voi
     var px_total: u64 = 0;
     std.debug.print("{s:<28} {s:>11} {s:>8} {s:>4} {s:>6} {s:>5} {s:>7} {s:>7}\n", .{ "node", "size", "within2", "max", "prims", "fb", "cpu ms", "gpu ms" });
     for (session.pages()) |*pg| for (pg.children) |*n| {
-        if (filter.len > 0 and std.ascii.indexOfIgnoreCase(n.name, filter) == null) continue;
+        if (filter.len > 0 and std.ascii.findIgnoreCase(n.name, filter) == null) continue;
         const w = n.size.x * scale;
         const h = n.size.y * scale;
         if (w * h > 40e6 or w < 1 or h < 1) continue;

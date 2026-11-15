@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
                 .cpu_arch = .wasm32,
                 .os_tag = .freestanding,
             }),
-            .optimize = .ReleaseSmall,
+            .optimize = .small,
         }),
     });
     jit_engine.entry = .disabled;
@@ -89,7 +89,7 @@ pub fn build(b: *std.Build) void {
 /// input and an edit anywhere re-runs the tool.
 fn declare_inputs(b: *std.Build, run: *std.Build.Step.Run, dir: []const u8) void {
     const io = b.graph.io;
-    const base = b.pathFromRoot(dir);
+    const base = b.root.joinString(b.graph.arena, dir) catch @panic("out of memory");
     var handle = std.Io.Dir.cwd().openDir(io, base, .{
         .iterate = true,
     }) catch {

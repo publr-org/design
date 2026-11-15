@@ -784,7 +784,7 @@ fn be(comptime T: type, v: T) [@sizeOf(T)]u8 {
 /// point, overlap flag set), glyph 2 a scaled composite of glyph 1 with instructions.
 const test_font = struct {
     const head = blk: {
-        var h = [_]u8{0} ** 54;
+        var h: [54]u8 = @splat(0);
         h[0] = 0;
         h[1] = 1;
         h[12] = 0x5f;
@@ -796,7 +796,7 @@ const test_font = struct {
         break :blk h; // indexToLocFormat 0
     };
     const hhea = blk: {
-        var h = [_]u8{0} ** 36;
+        var h: [36]u8 = @splat(0);
         h[1] = 1;
         h[35] = 2; // numberOfHMetrics
         break :blk h;

@@ -364,8 +364,8 @@ pub const Error = error{
 /// Copies the fields named `names` of `src` into `dst` (same type), as they are.
 fn copyFields(comptime T: type, dst: *T, src: *const T, names: []const []const u8) void {
     for (names) |name| {
-        inline for (@typeInfo(T).@"struct".fields) |f| {
-            if (std.mem.eql(u8, f.name, name)) @field(dst, f.name) = @field(src, f.name);
+        inline for (@typeInfo(T).@"struct".field_names) |field_name| {
+            if (std.mem.eql(u8, field_name, name)) @field(dst, field_name) = @field(src, field_name);
         }
     }
 }
@@ -373,8 +373,8 @@ fn copyFields(comptime T: type, dst: *T, src: *const T, names: []const []const u
 /// Deep copies the fields named `names` of `src` into `dst` (same type) in `a`.
 fn takeFields(comptime T: type, a: Allocator, dst: *T, src: *const T, names: []const []const u8) !void {
     for (names) |name| {
-        inline for (@typeInfo(T).@"struct".fields) |f| {
-            if (std.mem.eql(u8, f.name, name)) @field(dst, f.name) = try m.deepCopy(a, @field(src, f.name));
+        inline for (@typeInfo(T).@"struct".field_names) |field_name| {
+            if (std.mem.eql(u8, field_name, name)) @field(dst, field_name) = try m.deepCopy(a, @field(src, field_name));
         }
     }
 }
@@ -473,26 +473,26 @@ pub fn kindName(buf: *[40]u8, k: m.Kind) []const u8 {
 
 test "every field of a node is some key's" {
     const own = [_][]const u8{ "id", "children", "rev", "shape_rev", "tree_rev", "edits" };
-    inline for (@typeInfo(m.Node).@"struct".fields) |f| {
+    inline for (@typeInfo(m.Node).@"struct".field_names) |field_name| {
         var found = false;
-        for (own) |o| found = found or std.mem.eql(u8, o, f.name);
+        for (own) |o| found = found or std.mem.eql(u8, o, field_name);
         for (keys) |k| if (!k.text) for (k.fields) |x| {
-            found = found or std.mem.eql(u8, x, f.name);
+            found = found or std.mem.eql(u8, x, field_name);
         };
         // `text` is the node's text: its fields are keys of their own.
-        found = found or std.mem.eql(u8, f.name, "text");
+        found = found or std.mem.eql(u8, field_name, "text");
         if (!found) {
-            std.debug.print("node field {s} has no key\n", .{f.name});
+            std.debug.print("node field {s} has no key\n", .{field_name});
             return error.TestUnexpectedResult;
         }
     }
-    inline for (@typeInfo(m.Text).@"struct".fields) |f| {
+    inline for (@typeInfo(m.Text).@"struct".field_names) |field_name| {
         var found = false;
         for (keys) |k| if (k.text) for (k.fields) |x| {
-            found = found or std.mem.eql(u8, x, f.name);
+            found = found or std.mem.eql(u8, x, field_name);
         };
         if (!found) {
-            std.debug.print("text field {s} has no key\n", .{f.name});
+            std.debug.print("text field {s} has no key\n", .{field_name});
             return error.TestUnexpectedResult;
         }
     }

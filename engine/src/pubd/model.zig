@@ -1153,7 +1153,7 @@ pub fn deepCopy(a: std.mem.Allocator, v: anytype) error{OutOfMemory}!@TypeOf(v) 
         },
         .@"struct" => |st| {
             var out: T = v;
-            inline for (st.fields) |f| @field(out, f.name) = try deepCopy(a, @field(v, f.name));
+            inline for (st.field_names) |field_name| @field(out, field_name) = try deepCopy(a, @field(v, field_name));
             return out;
         },
         .@"union" => |u| {
@@ -1201,11 +1201,11 @@ pub fn findNotFinite(doc: *const Document) ?NotFinite {
 
 fn nodeNotFinite(n: *const Node, p: *NotFinite) bool {
     p.node = n.id;
-    inline for (@typeInfo(Node).@"struct".fields) |f| {
-        if (comptime std.mem.eql(u8, f.name, "children")) continue;
+    inline for (@typeInfo(Node).@"struct".field_names) |field_name| {
+        if (comptime std.mem.eql(u8, field_name, "children")) continue;
         p.len = 0;
-        p.push("{s}", .{f.name});
-        if (valueNotFinite(@field(n, f.name), p)) return true;
+        p.push("{s}", .{field_name});
+        if (valueNotFinite(@field(n, field_name), p)) return true;
     }
     for (n.children) |*c| if (nodeNotFinite(c, p)) return true;
     return false;
@@ -1223,10 +1223,10 @@ fn valueNotFinite(v: anytype, p: *NotFinite) bool {
         },
         .@"struct" => |s| {
             const mark = p.len;
-            inline for (s.fields) |f| {
+            inline for (s.field_names) |field_name| {
                 p.len = mark;
-                p.push(".{s}", .{f.name});
-                if (valueNotFinite(@field(v, f.name), p)) return true;
+                p.push(".{s}", .{field_name});
+                if (valueNotFinite(@field(v, field_name), p)) return true;
             }
             p.len = mark;
             return false;

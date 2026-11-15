@@ -84,20 +84,52 @@ pub fn run(io: Io, gpa: std.mem.Allocator, w: *Io.Writer, dir: []const u8, args:
         // Estimated curve visits per path prim at fit (pixels x curves its rows read).
         var total: f64 = 0;
         var chosen_curves: u64 = 0;
-        var worst: [8]struct { cost: f64, prim: u32 } = @splat(.{ .cost = 0, .prim = 0 });
+        var worst: [8]struct {
+            cost: f64,
+            prim: u32,
+        } = @splat(.{
+            .cost = 0,
+            .prim = 0,
+        });
         for (rec.prims.items, 0..) |p, ii| {
             if (p.shape == engine.gpu_records.none) continue;
             const sh = rec.shapes.items[p.shape];
             if (sh.kind != 3 and sh.kind != 4) continue;
             const cam = rec.cameras.items[p.top];
-            const ca: engine.geom.Affine = .{ .a = cam.a, .b = cam.b, .c = cam.c, .d = cam.d, .e = cam.e, .f = cam.f };
+            const ca: engine.geom.Affine = .{
+                .a = cam.a,
+                .b = cam.b,
+                .c = cam.c,
+                .d = cam.d,
+                .e = cam.e,
+                .f = cam.f,
+            };
             const xv = rec.xforms.items[sh.xf];
-            var full = ca.mul(.{ .a = xv[0], .b = xv[1], .c = xv[2], .d = xv[3], .e = xv[4], .f = xv[5] });
-            if (sh.kind == 4) full = full.mul(.{ .a = sh.v0[1], .b = sh.v0[2], .c = sh.v0[3], .d = sh.v1[0], .e = sh.v1[1], .f = sh.v1[2] });
+            var full = ca.mul(.{
+                .a = xv[0],
+                .b = xv[1],
+                .c = xv[2],
+                .d = xv[3],
+                .e = xv[4],
+                .f = xv[5],
+            });
+            if (sh.kind == 4) full = full.mul(.{
+                .a = sh.v0[1],
+                .b = sh.v0[2],
+                .c = sh.v0[3],
+                .d = sh.v1[0],
+                .e = sh.v1[1],
+                .f = sh.v1[2],
+            });
             const pr = rec.paths.items[@as(u32, @bitCast(sh.v0[0]))];
             const sc = full.maxScale();
             const masked = pr.mask != engine.gpu_records.none and sc <= rec.masks.items[pr.mask].k;
-            const bb = engine.geom.Rect.transformed(.{ .x0 = p.x0, .y0 = p.y0, .x1 = p.x1, .y1 = p.y1 }, ca);
+            const bb = engine.geom.Rect.transformed(.{
+                .x0 = p.x0,
+                .y0 = p.y0,
+                .x1 = p.x1,
+                .y1 = p.y1,
+            }, ca);
             const wpx = @max(1, @ceil(bb.x1) - @floor(bb.x0));
             const hpx = @max(1, @ceil(bb.y1) - @floor(bb.y0));
             const upright = full.b == 0 and full.c == 0;
@@ -116,7 +148,10 @@ pub fn run(io: Io, gpa: std.mem.Allocator, w: *Io.Writer, dir: []const u8, args:
             for (worst, 0..) |x, i| if (x.cost < worst[mi].cost) {
                 mi = i;
             };
-            if (cost > worst[mi].cost) worst[mi] = .{ .cost = cost, .prim = @intCast(ii) };
+            if (cost > worst[mi].cost) worst[mi] = .{
+                .cost = cost,
+                .prim = @intCast(ii),
+            };
         }
         try w.print("estimated curve visits at fit: {d:.1} M ({d} curves drawn)\n", .{ total / 1e6, chosen_curves });
         {
@@ -257,7 +292,7 @@ pub fn msSince(io: Io, t0: Io.Timestamp) f64 {
 const Census = struct {
     nodes: u64 = 0,
     hidden: u64 = 0,
-    kinds: [32]u64 = .{0} ** 32,
+    kinds: [32]u64 = @splat(0),
     max_depth: u32 = 0,
     texts: u64 = 0,
     glyphs: u64 = 0,
@@ -287,7 +322,7 @@ const Census = struct {
     fn print(c: *const Census, w: *Io.Writer) !void {
         try w.print("nodes {d} (+{d} hidden), depth {d}\n", .{ c.nodes, c.hidden, c.max_depth });
         try w.print("  kinds:", .{});
-        for (c.kinds, 0..) |v, i| if (v > 0) try w.print(" {s} {d}", .{ @tagName(@as(m.Kind, @enumFromInt(i))), v });
+        for (c.kinds, 0..) |v, i| if (v > 0) try w.print(" {s} {d}", .{ @tagName(@as(m.Kind, @fromBackingInt(@intCast(i)))), v });
         try w.print("\n  texts {d}, glyphs {d}\n", .{ c.texts, c.glyphs });
         try w.print("  stored geometry: {d} nodes, {d} verbs; networks {d}\n", .{ c.geometry_nodes, c.geometry_verbs, c.network_nodes });
         try w.print("  strokes: outline {d}, ring {d}, computed {d}\n", .{ c.stroke_outline, c.stroke_ring, c.stroke_computed });
@@ -305,7 +340,7 @@ fn census(c: *Census, s: *Session, n: *const m.Node, depth: u32) void {
     }
     c.nodes += 1;
     c.max_depth = @max(c.max_depth, depth);
-    c.kinds[@intFromEnum(n.kind)] += 1;
+    c.kinds[@backingInt(n.kind)] += 1;
     const t = n.transform;
     if (t.b != 0 or t.c != 0) c.rotated += 1;
     if (n.text != null) {

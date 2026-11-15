@@ -38,7 +38,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
+    run.addPassthruArgs();
     b.step("run", "Open the native viewer").dependOn(&run.step);
 
     // Publr's tidy, with only the options rule: optional parameters are one trailing

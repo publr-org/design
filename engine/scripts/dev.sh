@@ -10,7 +10,7 @@ PORT=${3:-8400}
 PIDFILE=.zig-cache/pe-serve-$PORT.pid
 LOG=.zig-cache/pe-serve-$PORT.log
 
-zig build -Doptimize=ReleaseFast
+zig build -Doptimize=fast
 (cd ../editor && zig build)
 
 if [ -f "$PIDFILE" ]; then

@@ -220,7 +220,12 @@ fn write_default_theme(gen: *Gen, from: []const u8) !void {
         },
     };
     const source = try std.Io.Dir.cwd().readFileAllocOptions(gen.io, from, gen.arena, .limited(file_bytes_max), .of(u8), 0);
-    const theme = try std.zon.parse.fromSliceAlloc(Theme, gen.arena, source, null, .{
+    var diagnostics: std.zon.parse.Diagnostics = undefined;
+    const theme = try std.zon.parse.fromSlice(Theme, .{
+        .gpa = gen.arena,
+        .arena = gen.arena,
+        .source = source,
+        .diagnostics = &diagnostics,
         .ignore_unknown_fields = true,
     });
     var out: std.Io.Writer.Allocating = .init(gen.arena);
@@ -334,9 +339,9 @@ fn page_html(gen: *Gen, page: Page) ![]const u8 {
     try w.print(page_head, .{ page.html_class, page.title, page.boot });
     try w.print("<div id=\"app\"></div>\n<script type=\"module\" src=\"{s}\"></script>\n", .{page.entry});
     try w.writeAll("<svg id=\"publr-icon-sprite\" style=\"position:absolute;width:0;height:0;overflow:hidden\" aria-hidden=\"true\">");
-    inline for (@typeInfo(publr_icons.Name).@"enum".fields) |field| {
-        const name = comptime publr_icons.kebab(field.name);
-        try w.print("<symbol id=\"publr-icon-{s}\" viewBox=\"{s}\" fill=\"none\">{s}</symbol>", .{ name, publr_icons.view_box, @field(publr_icons, field.name) });
+    inline for (@typeInfo(publr_icons.Name).@"enum".field_names) |field_name| {
+        const name = comptime publr_icons.kebab(field_name);
+        try w.print("<symbol id=\"publr-icon-{s}\" viewBox=\"{s}\" fill=\"none\">{s}</symbol>", .{ name, publr_icons.view_box, @field(publr_icons, field_name) });
     }
     try w.writeAll("</svg>\n</body>\n</html>\n");
     return out.written();

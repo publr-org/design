@@ -53,21 +53,21 @@ pub const F = struct {
 const types = [_][]const u8{ "frame", "group", "section", "component", "component-set", "instance", "rectangle", "ellipse", "line", "vector", "text", "star", "polygon", "boolean", "slice", "page", "other" };
 
 fn typeCode(k: m.Kind) u8 {
-    return type_codes[@intFromEnum(k)];
+    return type_codes[@backingInt(k)];
 }
 
 /// `types` index by kind, worked out once.
 const type_codes = blk: {
-    const fields = @typeInfo(m.Kind).@"enum".fields;
-    var out: [fields.len]u8 = undefined;
-    for (fields) |f| {
-        var buf: [f.name.len]u8 = undefined;
-        for (f.name, 0..) |ch, i| buf[i] = if (ch == '_') '-' else ch;
+    const info = @typeInfo(m.Kind).@"enum";
+    var out: [info.field_names.len]u8 = undefined;
+    for (info.field_names, info.field_values) |field_name, value| {
+        var buf: [field_name.len]u8 = undefined;
+        for (field_name, 0..) |ch, i| buf[i] = if (ch == '_') '-' else ch;
         var code: u8 = types.len - 1;
         for (types, 0..) |t, i| if (std.mem.eql(u8, t, &buf)) {
             code = i;
         };
-        out[f.value] = code;
+        out[value] = code;
     }
     break :blk out;
 };

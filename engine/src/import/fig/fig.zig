@@ -2406,10 +2406,10 @@ fn kindOf(src: Src, t: []const u8) ?m.Kind {
 fn blendOf(s: []const u8) m.Blend {
     if (std.mem.eql(u8, s, "PASS_THROUGH")) return .pass_through;
     if (std.mem.eql(u8, s, "NORMAL")) return .normal;
-    inline for (@typeInfo(m.Blend).@"enum".fields) |f| {
+    inline for (@typeInfo(m.Blend).@"enum".field_names) |field_name| {
         var buf: [32]u8 = undefined;
-        const up = std.ascii.upperString(&buf, f.name);
-        if (std.mem.eql(u8, s, up)) return @field(m.Blend, f.name);
+        const up = std.ascii.upperString(&buf, field_name);
+        if (std.mem.eql(u8, s, up)) return @field(m.Blend, field_name);
     }
     return .normal;
 }
@@ -2529,7 +2529,7 @@ fn fontOf(src: Src, s: *m.TextStyle) void {
         };
     }
     s.weight = w;
-    if (std.ascii.indexOfIgnoreCase(style, "italic") != null or std.ascii.indexOfIgnoreCase(style, "oblique") != null) s.italic = true;
+    if (std.ascii.findIgnoreCase(style, "italic") != null or std.ascii.findIgnoreCase(style, "oblique") != null) s.italic = true;
 }
 
 /// `RAW` is a multiple of the font size, `PERCENT` 100 is the font's own ("auto"),

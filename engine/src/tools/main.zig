@@ -6,7 +6,7 @@
 //!   pe render <doc.pubd-dir> <node-id> <scale> <out.png>
 //!   pe score <doc.pubd-dir> <renders-dir> [out-dir]
 //!   pe decode <image> <out.png>
-//!   pe serve <doc.pubd-dir> <renders-dir> [--port 8400] [--site DIR]
+//!   pe serve [doc.pubd-dir renders-dir] [--port 8400] [--site DIR]
 //!   pe view [doc.pubd-dir | file.fig] [--port 8402]
 //!   pe tilecheck <doc.pubd-dir> <node-id> <scale>...
 //!   pe gpuscene <doc.pubd-dir> [scale]
@@ -116,7 +116,10 @@ pub fn main(init: std.process.Init) !void {
     if (args.len >= 4 and std.mem.eql(u8, args[1], "score")) {
         return score(io, gpa, w, args[2], args[3], if (args.len >= 5) args[4] else null);
     }
-    if (args.len >= 4 and std.mem.eql(u8, args[1], "serve")) {
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "serve")) {
+        // Without both paths the page serves the landing corpus.
+        const has_paths = args.len >= 4 and !std.mem.startsWith(u8, args[2], "--");
+        if (!has_paths) return serve.run(io, gpa, w, "corpus/landing/landing.pubd", "corpus/landing/renders", args[2..]);
         return serve.run(io, gpa, w, args[2], args[3], args[4..]);
     }
     if (args.len >= 2 and std.mem.eql(u8, args[1], "view")) {
@@ -143,7 +146,7 @@ pub fn main(init: std.process.Init) !void {
         \\  pe fig-dump <file.fig> <type | field>
         \\  pe render <doc.pubd-dir> <node-id> <scale> <out.png>
         \\  pe score <doc.pubd-dir> <renders-dir> [out-dir]
-        \\  pe serve <doc.pubd-dir> <renders-dir> [--port 8400] [--site DIR]
+        \\  pe serve [doc.pubd-dir renders-dir] [--port 8400] [--site DIR]
         \\  pe view [doc.pubd-dir | file.fig] [--port 8402]
         \\  pe tilecheck <doc.pubd-dir> <node-id> <scale>...
         \\  pe layout-check <doc.pubd-dir> [--show N] [--instances] [--incremental N] [--text]

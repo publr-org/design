@@ -229,7 +229,7 @@ fn draw(app: *App, win: *native.Window, w_pt: f64, h_pt: f64, dev: f64, moving: 
 
     var title: [256]u8 = undefined;
     const st = app.host.stats;
-    const t = std.fmt.bufPrintZ(&title, "PublrDesign  |  {d:.0}%  |  {d:.1} ms (scene {d:.1})  |  {d} prims, {d} layers pending{s}  |  {s}", .{
+    const t = std.fmt.bufPrintSentinel(&title, "PublrDesign  |  {d:.0}%  |  {d:.1} ms (scene {d:.1})  |  {d} prims, {d} layers pending{s}  |  {s}", .{
         app.view.zoom * 100,
         app.frame_ms,
         scene_ms,
@@ -237,7 +237,7 @@ fn draw(app: *App, win: *native.Window, w_pt: f64, h_pt: f64, dev: f64, moving: 
         st.pending,
         if (moving) " (moving)" else "",
         app.view.selected_name,
-    }) catch return true;
+    }, 0) catch return true;
     win.setTitle(t);
     return true;
 }

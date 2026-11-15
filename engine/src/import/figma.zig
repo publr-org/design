@@ -633,10 +633,10 @@ fn kindOf(t: []const u8) m.Kind {
 fn blendOf(s: []const u8) m.Blend {
     if (std.mem.eql(u8, s, "PASS_THROUGH")) return .pass_through;
     if (std.mem.eql(u8, s, "NORMAL")) return .normal;
-    inline for (@typeInfo(m.Blend).@"enum".fields) |f| {
+    inline for (@typeInfo(m.Blend).@"enum".field_names) |field_name| {
         var buf: [32]u8 = undefined;
-        const up = std.ascii.upperString(&buf, f.name);
-        if (std.mem.eql(u8, s, up)) return @field(m.Blend, f.name);
+        const up = std.ascii.upperString(&buf, field_name);
+        if (std.mem.eql(u8, s, up)) return @field(m.Blend, field_name);
     }
     return .normal;
 }

@@ -226,7 +226,7 @@ pub const Gather = struct {
     /// Modes nodes set (`collection id\x00mode id`), counted like values.
     mode_sets: std.StringArrayHashMapUnmanaged(Count) = .empty,
     /// Per kind: uses, and uses by the variables they bind.
-    cat_uses: [cats.len]u64 = .{0} ** cats.len,
+    cat_uses: [cats.len]u64 = @splat(0),
     bound: std.StringArrayHashMapUnmanaged(Bound) = .empty,
     key_buf: std.ArrayList(u8) = .empty,
     field_buf: std.ArrayList(u8) = .empty,
@@ -297,7 +297,7 @@ pub const Gather = struct {
         if (!gop.found_existing) gop.value_ptr.* = .{};
         const u = gop.value_ptr;
         try g.bump(&u.count, n);
-        u.by[@intFromEnum(kind)] += 1;
+        u.by[@backingInt(kind)] += 1;
         if (style) |s| if (g.src.style(s)) |st| u.styles.add(st.name);
         if (variable) |v| if (g.src.variable(v)) |vr| u.vars.add(try g.fullName(vr));
         try g.useCat(0, if (variable) |v| &.{v} else &.{});
@@ -898,7 +898,7 @@ pub fn runWith(io: Io, gpa: A, w: *Io.Writer, src_path: []const u8, out_path: []
     };
     for (src.page_names) |name| {
         var skipped = false;
-        for (skip) |s| skipped = skipped or std.ascii.indexOfIgnoreCase(name, s) != null;
+        for (skip) |s| skipped = skipped or std.ascii.findIgnoreCase(name, s) != null;
         try g.pages.append(a, .{
             .name = name,
             .skipped = skipped,
@@ -945,7 +945,7 @@ pub fn runWith(io: Io, gpa: A, w: *Io.Writer, src_path: []const u8, out_path: []
 /// breakpoint labelled "390 XS", a colour named on its swatch).
 fn docPage(name: []const u8) bool {
     const words = [_][]const u8{ "style", "token", "foundation", "guide", "design system", "brand", "typograph", "colou", "color", "breakpoint", "icon" };
-    for (words) |x| if (std.ascii.indexOfIgnoreCase(name, x) != null) return true;
+    for (words) |x| if (std.ascii.findIgnoreCase(name, x) != null) return true;
     return false;
 }
 
@@ -1653,7 +1653,7 @@ fn writeEvidence(gpa: A, g: *Gather, src_path: []const u8) ![]u8 {
 
 fn primitiveName(name: []const u8) bool {
     const words = [_][]const u8{ "button", "btn", "cta", "link", "input", "field", "tag", "badge", "chip", "pill", "toggle", "checkbox", "radio", "select", "dropdown", "label" };
-    for (words) |x| if (std.ascii.indexOfIgnoreCase(name, x) != null) return true;
+    for (words) |x| if (std.ascii.findIgnoreCase(name, x) != null) return true;
     return false;
 }
 

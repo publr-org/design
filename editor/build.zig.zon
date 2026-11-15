@@ -2,7 +2,7 @@
     .name = .publr_design,
     .version = "0.1.0",
     .fingerprint = 0xf8caebf7551c9142,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         // Build-time only: the compiler that lowers every module and the jit engine the
         // chrome's classes are compiled with in the browser.

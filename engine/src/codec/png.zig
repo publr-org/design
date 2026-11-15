@@ -648,7 +648,7 @@ fn headerBytes(width: u32, height: u32, depth: u8, color: ColorType, options: He
     std.mem.writeInt(u32, b[0..4], width, .big);
     std.mem.writeInt(u32, b[4..8], height, .big);
     b[8] = depth;
-    b[9] = @intFromEnum(color);
+    b[9] = @backingInt(color);
     b[10] = 0;
     b[11] = 0;
     b[12] = @intFromBool(options.interlaced);
@@ -871,7 +871,7 @@ test "encode then decode round-trips a gradient with alpha" {
 test "encode rejects bad input" {
     const gpa = testing.allocator;
     try testing.expectError(error.InvalidDimensions, encode(gpa, 0, 1, &.{}));
-    try testing.expectError(error.InvalidPixelBuffer, encode(gpa, 2, 2, &[_]u8{0} ** 15));
+    try testing.expectError(error.InvalidPixelBuffer, encode(gpa, 2, 2, &@as([15]u8, @splat(0))));
 }
 
 test "every colour type and bit depth, plain and interlaced" {

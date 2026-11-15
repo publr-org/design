@@ -299,7 +299,7 @@ pub const Header = extern struct {
     /// until surfaces come (step B).
     approximated: u32 = 0,
     /// Prims per `Feature`.
-    features: [12]u32 = .{0} ** 12,
+    features: [12]u32 = @splat(0),
 };
 
 /// Per frame: the cameras and which top-level nodes are in view.
@@ -1106,7 +1106,7 @@ pub const Records = struct {
         if (!regions and fill != none) for (n.fills) |*p| {
             if (!p.visible or p.kind == .pattern) continue;
             const paint = try self.paintFor(n, p) orelse continue;
-            const feature: Feature = if (self.shapes.items[fill].kind == @intFromEnum(ShapeKind.path)) .fill_path else .fill_formula;
+            const feature: Feature = if (self.shapes.items[fill].kind == @backingInt(ShapeKind.path)) .fill_path else .fill_formula;
             try self.addPrim(fill, none, .none, clip, paint, opacity * p.opacity, feature, xf, render.blendMode(p.blend));
         };
 
@@ -1345,7 +1345,7 @@ pub const Records = struct {
         }
         const nb = Rect.transformed(fb, gm);
         return try self.pushShape(.{
-            .kind = @intFromEnum(ShapeKind.glyph),
+            .kind = @backingInt(ShapeKind.glyph),
             .next = none,
             .xf = xf,
             .flags = 0,
@@ -1470,7 +1470,7 @@ pub const Records = struct {
 
     fn boxShape(self: *Records, kind: ShapeKind, outer: Rect, radii: [4]f32, xf: u32, mt: Affine, options: BoxShapeOptions) !u32 {
         return self.pushShape(.{
-            .kind = @intFromEnum(kind),
+            .kind = @backingInt(kind),
             .next = none,
             .xf = xf,
             .flags = if (options.inner != null) 1 else 0,
@@ -1539,7 +1539,7 @@ pub const Records = struct {
         if (pr.curve_count == 0) return none;
         const b = path.bounds();
         return self.pushShape(.{
-            .kind = @intFromEnum(ShapeKind.path),
+            .kind = @backingInt(ShapeKind.path),
             .next = none,
             .xf = xf,
             .flags = if (winding == .evenodd) 2 else 0,
@@ -1768,7 +1768,7 @@ pub const Records = struct {
         var knock: u32 = none;
         if (!e.behind) {
             knock = try self.fillOf(n, self.xformAt(xf), xf);
-            if (knock != none and self.shapes.items[knock].kind == @intFromEnum(ShapeKind.path)) knock = none;
+            if (knock != none and self.shapes.items[knock].kind == @backingInt(ShapeKind.path)) knock = none;
         }
         // Where it reaches: the moved box and three sigmas (node units), two pixels more.
         const reach = 3 * e.radius * render.shadow_k;
@@ -1789,7 +1789,7 @@ pub const Records = struct {
             // Wide blurs go to the coarse grid on the CPU: passes then.
             if (e.radius * render.shadow_k > render.coarse_sigma / 64) return false;
         }
-        return scene_mod.formula_shadows and self.shapes.items[fill].kind != @intFromEnum(ShapeKind.path) and !(render.use_geometry and n.geometry.len > 0) and uprightEven(mt) and if (self.top_nodes_current) |t| uprightEven(t.transform) else false;
+        return scene_mod.formula_shadows and self.shapes.items[fill].kind != @backingInt(ShapeKind.path) and !(render.use_geometry and n.geometry.len > 0) and uprightEven(mt) and if (self.top_nodes_current) |t| uprightEven(t.transform) else false;
     }
 
     fn innerShadow(self: *Records, n: *const m.Node, e: m.Effect, mt: Affine, xf: u32, clip: u32, fill: u32) !void {
@@ -1811,7 +1811,7 @@ pub const Records = struct {
     fn shadowPaint(self: *Records, box: [4]f32, radii: [4]f32, e: m.Effect, ellipse: bool, inner: bool) !u32 {
         const c = colour.solid(e.color);
         const i = try self.pushPaint(.{
-            .kind = @intFromEnum(PaintKind.shadow_formula),
+            .kind = @backingInt(PaintKind.shadow_formula),
             .flags = @as(u32, @intFromBool(ellipse)) | (@as(u32, @intFromBool(inner)) << 1),
             .a = 0,
             .b = 0,
@@ -1870,7 +1870,7 @@ pub const Records = struct {
         switch (p.kind) {
             .solid => {
                 const c = colour.solid(p.color);
-                out.kind = @intFromEnum(PaintKind.solid);
+                out.kind = @backingInt(PaintKind.solid);
                 out.color = pix.premultiply(c.r, c.g, c.b, c.a);
             },
             .linear, .radial, .angular, .diamond => {
@@ -1888,10 +1888,10 @@ pub const Records = struct {
                 const full = Affine.scaling(size.x, size.y).mul(g);
                 const inv = full.invert() orelse return null;
                 out.kind = switch (p.kind) {
-                    .radial => @intFromEnum(PaintKind.radial),
-                    .angular => @intFromEnum(PaintKind.angular),
-                    .diamond => @intFromEnum(PaintKind.diamond),
-                    else => @intFromEnum(PaintKind.linear),
+                    .radial => @backingInt(PaintKind.radial),
+                    .angular => @backingInt(PaintKind.angular),
+                    .diamond => @backingInt(PaintKind.diamond),
+                    else => @backingInt(PaintKind.linear),
                 };
                 out.a = options.stops_at orelse @intCast(self.stops.items.len);
                 out.b = @intCast(p.stops.len);
@@ -1919,7 +1919,7 @@ pub const Records = struct {
                     ih = @floatFromInt(if (mip.height > 0) mip.height else mip.levels[0].h);
                 }
                 const n2i = render.imageSpace(p, size, iw, ih) orelse return null;
-                out.kind = @intFromEnum(PaintKind.image);
+                out.kind = @backingInt(PaintKind.image);
                 out.flags = @as(u32, @intFromBool(p.scale == .tile)) | (@as(u32, @intFromBool(p.scale == .fit or p.scale == .crop)) << 1);
                 out.a = try self.imageIndex(p.asset, @intFromFloat(iw), @intFromFloat(ih));
                 out.inv = .{ n2i.a, n2i.b, n2i.c, n2i.d };
@@ -1970,19 +1970,19 @@ pub const Records = struct {
             .shape2 = shape2,
             .clip = clip,
             .paint = paint,
-            .op = @intFromEnum(op),
+            .op = @backingInt(op),
             .xf = xf,
             .top = self.top,
-            .feature = @intFromEnum(feature),
+            .feature = @backingInt(feature),
             .opacity = opacity * self.alpha,
-            .blend = @intFromEnum(scene_mod.Blend.of(blend)),
+            .blend = @backingInt(scene_mod.Blend.of(blend)),
             .owner = self.owner,
             .margin = margin,
         });
-        self.header.features[@intFromEnum(feature)] += 1;
+        self.header.features[@backingInt(feature)] += 1;
         const pt = self.paints.items[paint];
-        const tex = if (pt.kind == @intFromEnum(PaintKind.image)) pt.a else none;
-        if (pt.kind == @intFromEnum(PaintKind.image)) if (self.image_srcs.get(paint)) |src| {
+        const tex = if (pt.kind == @backingInt(PaintKind.image)) pt.a else none;
+        if (pt.kind == @backingInt(PaintKind.image)) if (self.image_srcs.get(paint)) |src| {
             try self.image_uses.append(self.gpa, .{
                 .top = self.top,
                 .xf = xf,
@@ -2134,12 +2134,12 @@ fn paintAt(n: *const m.Node, src: PaintSrc) ?*const m.Paint {
 /// with as many stops).
 fn fits(p: *const m.Paint, r: Paint) bool {
     return switch (p.kind) {
-        .solid => r.kind == @intFromEnum(PaintKind.solid),
-        .linear => r.kind == @intFromEnum(PaintKind.linear) and r.b == p.stops.len,
-        .radial => r.kind == @intFromEnum(PaintKind.radial) and r.b == p.stops.len,
-        .angular => r.kind == @intFromEnum(PaintKind.angular) and r.b == p.stops.len,
-        .diamond => r.kind == @intFromEnum(PaintKind.diamond) and r.b == p.stops.len,
-        .image => r.kind == @intFromEnum(PaintKind.image),
+        .solid => r.kind == @backingInt(PaintKind.solid),
+        .linear => r.kind == @backingInt(PaintKind.linear) and r.b == p.stops.len,
+        .radial => r.kind == @backingInt(PaintKind.radial) and r.b == p.stops.len,
+        .angular => r.kind == @backingInt(PaintKind.angular) and r.b == p.stops.len,
+        .diamond => r.kind == @backingInt(PaintKind.diamond) and r.b == p.stops.len,
+        .image => r.kind == @backingInt(PaintKind.image),
         .pattern => false,
     };
 }
@@ -2200,7 +2200,7 @@ test "records: a page written once, a top-level node written again after an edit
     try std.testing.expectEqual(@as(u32, 3), rec.paths.items[0].curve_count);
     try std.testing.expectEqual(@as(usize, 1), rec.items.items.len);
     try std.testing.expectEqual(Item.node, rec.items.items[0].kind);
-    try std.testing.expect(rec.header.features[@intFromEnum(Feature.shadow_formula)] == 1);
+    try std.testing.expect(rec.header.features[@backingInt(Feature.shadow_formula)] == 1);
     // A frame: one camera per top-level node, both in view.
     try rec.frame(s, 0, 0, 2, 400, 200);
     try std.testing.expectEqual(@as(u32, 2), rec.frame_header.visible_count);

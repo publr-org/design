@@ -456,7 +456,7 @@ pub const Font = struct {
     /// The metrics of this instance (the same values as the fields).
     pub fn metrics(self: *const Font) Metrics {
         var m: Metrics = .{};
-        inline for (@typeInfo(Metrics).@"struct".fields) |fld| @field(m, fld.name) = @field(self, fld.name);
+        inline for (@typeInfo(Metrics).@"struct".field_names) |field_name| @field(m, field_name) = @field(self, field_name);
         return m;
     }
 
@@ -518,7 +518,7 @@ pub const Font = struct {
         // Metrics: MVAR deltas on the defaults. The ascender, descender and
         // line gap deltas apply to hhea's values as well as OS/2's.
         const m = self.default_metrics;
-        inline for (@typeInfo(Metrics).@"struct".fields) |fld| @field(self, fld.name) = @field(m, fld.name);
+        inline for (@typeInfo(Metrics).@"struct".field_names) |field_name| @field(self, field_name) = @field(m, field_name);
         if (self.varied and self.vars.mvar.len != 0) {
             const Map = struct {
                 tag: *const [4]u8,
@@ -903,8 +903,9 @@ pub const Font = struct {
     pub fn pointBounds(self: *const Font, glyph: u16) ?[4]f32 {
         const box = self.glyphBounds(glyph) orelse return null;
         if (!self.variesOutlines()) return .{ @floatFromInt(box[0]), @floatFromInt(box[1]), @floatFromInt(box[2]), @floatFromInt(box[3]) };
-        var sfa = std.heap.stackFallback(32768, std.heap.smp_allocator);
-        const gpa = sfa.get();
+        var stack: [32768]u8 = undefined;
+        var bfa: std.heap.BufferFirstAllocator = .init(&stack, std.heap.smp_allocator);
+        const gpa = bfa.allocator();
         var o: Outline = .{};
         defer o.deinit(gpa);
         self.loadGlyph(gpa, glyph, &o, 0) catch return null;
@@ -1912,7 +1913,7 @@ test "variable Work Sans at wght 500 against the static Medium" {
         }
     }
     // Different builds: reported (in release builds), not asserted.
-    if (@import("builtin").mode != .Debug) std.debug.print("wght 500 vs WorkSans-Medium.ttf over {d} characters: max point-to-nearest-point difference {d:.2} units " ++
+    if (@import("builtin").mode != .debug) std.debug.print("wght 500 vs WorkSans-Medium.ttf over {d} characters: max point-to-nearest-point difference {d:.2} units " ++
         "over the glyphs with equal point counts ({d} glyphs differ in point count), max point bounding box difference {d:.2}, " ++
         "{d} advances differ (max {d})\n", .{ chars, max_point, mismatched_shapes, max_box, adv_diffs, max_adv });
 }
@@ -2044,7 +2045,7 @@ test "varied outlines are fast" {
         };
         timings[k] = @divTrunc(start.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, runs * glyphs.len);
     }
-    if (@import("builtin").mode != .Debug) {
+    if (@import("builtin").mode != .debug) {
         std.debug.print("outline: {d} ns per glyph static, {d} ns varied\n", .{ timings[0], timings[1] });
         try testing.expect(timings[1] < 10_000);
     }

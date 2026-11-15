@@ -892,7 +892,7 @@ fn morphLine(buf: []f32, stride: usize, n: usize, r: usize, grow: bool, tmp: []f
 
 test "blur keeps total" {
     const gpa = std.testing.allocator;
-    var a = [_]f32{0} ** 64;
+    var a: [64]f32 = @splat(0);
     a[27] = 1;
     try blurAlpha(gpa, &a, 8, 8, 1);
     var s: f32 = 0;
@@ -902,7 +902,7 @@ test "blur keeps total" {
 
 test "box blur matches gaussian spread" {
     const gpa = std.testing.allocator;
-    var a = [_]f32{0} ** 401;
+    var a: [401]f32 = @splat(0);
     a[200] = 1;
     try blurAlpha(gpa, &a, 401, 1, 20);
     var mean: f32 = 0;
@@ -923,14 +923,14 @@ test "box blur matches gaussian spread" {
 
 test "morph grows by r" {
     const gpa = std.testing.allocator;
-    var a = [_]f32{0} ** 21;
+    var a: [21]f32 = @splat(0);
     a[10] = 1;
     try spreadAlpha(gpa, &a, 21, 1, 3);
     try std.testing.expectEqual(@as(f32, 1), a[7]);
     try std.testing.expectEqual(@as(f32, 1), a[13]);
     try std.testing.expectEqual(@as(f32, 0), a[6]);
     // Shrinking a 9x9 square by 2 leaves 5x5.
-    var b = [_]f32{0} ** (11 * 11);
+    var b: [11 * 11]f32 = @splat(0);
     for (1..10) |y| for (1..10) |x| {
         b[y * 11 + x] = 1;
     };

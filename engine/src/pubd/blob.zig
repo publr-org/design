@@ -12,11 +12,11 @@ fn hasPointers(comptime T: type) bool {
         .optional => |o| hasPointers(o.child),
         .array => |a| hasPointers(a.child),
         .@"struct" => |s| blk: {
-            for (s.fields) |f| if (hasPointers(f.type)) break :blk true;
+            for (s.field_types) |Field| if (hasPointers(Field)) break :blk true;
             break :blk false;
         },
         .@"union" => |u| blk: {
-            for (u.fields) |f| if (hasPointers(f.type)) break :blk true;
+            for (u.field_types) |Field| if (hasPointers(Field)) break :blk true;
             break :blk false;
         },
         .bool, .int, .float, .@"enum", .void => false,
@@ -43,12 +43,12 @@ pub fn encode(gpa: std.mem.Allocator, out: *std.ArrayList(u8), v: anytype) error
             } else try out.append(gpa, 0);
         },
         .array => for (v) |x| try encode(gpa, out, x),
-        .@"struct" => |s| inline for (s.fields) |f| try encode(gpa, out, @field(v, f.name)),
+        .@"struct" => |s| inline for (s.field_names) |field_name| try encode(gpa, out, @field(v, field_name)),
         .@"union" => |u| {
             if (u.tag_type == null) @compileError("blob: untagged union " ++ @typeName(T));
             switch (v) {
                 inline else => |x, tag| {
-                    try out.appendSlice(gpa, std.mem.asBytes(&@as(u32, @intFromEnum(tag))));
+                    try out.appendSlice(gpa, std.mem.asBytes(&@as(u32, @backingInt(tag))));
                     try encode(gpa, out, x);
                 },
             }
@@ -103,13 +103,13 @@ pub fn decode(comptime T: type, a: std.mem.Allocator, r: *Reader) error{ OutOfMe
         },
         .@"struct" => |s| {
             var out: T = undefined;
-            inline for (s.fields) |f| @field(out, f.name) = try decode(f.type, a, r);
+            inline for (s.field_names, s.field_types) |field_name, Field| @field(out, field_name) = try decode(Field, a, r);
             return out;
         },
         .@"union" => |u| {
             const tag = try r.raw(u32);
-            inline for (u.fields) |f| {
-                if (@intFromEnum(@field(u.tag_type.?, f.name)) == tag) return @unionInit(T, f.name, try decode(f.type, a, r));
+            inline for (u.field_names, u.field_types) |field_name, Field| {
+                if (@backingInt(@field(u.tag_type.?, field_name)) == tag) return @unionInit(T, field_name, try decode(Field, a, r));
             }
             return error.BadBlob;
         },

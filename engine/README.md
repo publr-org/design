@@ -4,7 +4,7 @@ The PublrDesign rendering engine: Zig, built for WASM and native.
 
 ```
 zig build test                       # unit tests
-zig build -Doptimize=ReleaseFast     # zig-out/bin/pe
+zig build -Doptimize=fast     # zig-out/bin/pe
 
 pe import-figma corpus/landing/file.json corpus/landing/images corpus/landing/landing.pubd
 pe import-fig file.fig out.pubd          # page by page, streamed: any size (zip64)

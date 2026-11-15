@@ -124,7 +124,7 @@ pub const Blend = enum(u32) {
     _,
 
     pub fn of(b: pix.BlendMode) Blend {
-        return @enumFromInt(@intFromEnum(b));
+        return @fromBackingInt(@intCast(@backingInt(b)));
     }
 };
 
@@ -309,7 +309,7 @@ pub const Pass = extern struct {
     dst: u32,
     pad: u32 = 0,
     i: [8]i32 = .{ 0, 0, 0, 0, 0, 0, 0, 0 },
-    f: [20]f32 = .{0} ** 20,
+    f: [20]f32 = @splat(0),
 };
 
 pub const AtlasEntry = extern struct {
@@ -480,7 +480,7 @@ pub const Header = extern struct {
     nodes: u32 = 0,
     culled: u32 = 0,
     /// Primitives per `Feature` (index = the feature's number).
-    features: [12]u32 = .{0} ** 12,
+    features: [12]u32 = @splat(0),
     /// Fallbacks per `Reason`.
     reasons: [12]u32 = .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     glyph_uploads: u32 = 0,
@@ -1799,7 +1799,7 @@ pub const Scene = struct {
     /// A formula shape: `outer` (node space) with `radii`, less `options.inner` when given.
     fn rectShape(self: *Scene, ctm: Affine, outer: geom.Rect, radii: [4]f32, kind: ShapeKind, options: RectShapeOptions) !?u32 {
         var s: Shape = .{
-            .kind = @intFromEnum(kind),
+            .kind = @backingInt(kind),
             .next = none,
             .layer = 0,
             .flags = if (options.inner != null) 1 else 0,
@@ -1993,7 +1993,7 @@ pub const Scene = struct {
             });
         }
         _ = try self.pushShape(.{
-            .kind = @intFromEnum(ShapeKind.atlas),
+            .kind = @backingInt(ShapeKind.atlas),
             .next = none,
             .layer = layer,
             .flags = 0,
@@ -2135,7 +2135,7 @@ pub const Scene = struct {
 
     fn surfacePaint(self: *Scene, s: u32, inv: Affine, options: SurfacePaintOptions) !u32 {
         return self.pushPaint(.{
-            .kind = @intFromEnum(PaintKind.texture),
+            .kind = @backingInt(PaintKind.texture),
             .flags = @intFromBool(options.filtered),
             .a = s,
             .b = 0,
@@ -2147,7 +2147,7 @@ pub const Scene = struct {
 
     fn solidPaint(self: *Scene, c: [4]f32) !u32 {
         return self.pushPaint(.{
-            .kind = @intFromEnum(PaintKind.solid),
+            .kind = @backingInt(PaintKind.solid),
             .flags = 0,
             .a = 0,
             .b = 0,
@@ -2200,15 +2200,15 @@ pub const Scene = struct {
             .shape2 = shape2,
             .clip = clip,
             .paint = paint,
-            .op = @intFromEnum(op),
+            .op = @backingInt(op),
             .ox = self.ox,
             .oy = self.oy,
-            .feature = @intFromEnum(feature),
+            .feature = @backingInt(feature),
             .opacity = opacity,
-            .blend = @intFromEnum(x.blend) | (@intFromEnum(x.mask_mode) << 8),
+            .blend = @backingInt(x.blend) | (@backingInt(x.mask_mode) << 8),
             .mask = x.mask,
         });
-        self.header.features[@intFromEnum(feature)] += 1;
+        self.header.features[@backingInt(feature)] += 1;
         const tex = self.paintTexture(paint);
         const mask_tex = if (x.mask != none) self.paintTexture(x.mask) else none;
         var flags: u32 = 0;
@@ -2237,8 +2237,8 @@ pub const Scene = struct {
     fn paintTexture(self: *const Scene, p: u32) u32 {
         const pt = self.paints.items[p];
         return switch (pt.kind) {
-            @intFromEnum(PaintKind.image) => pt.a,
-            @intFromEnum(PaintKind.texture), @intFromEnum(PaintKind.shadow) => surface_bit | pt.a,
+            @backingInt(PaintKind.image) => pt.a,
+            @backingInt(PaintKind.texture), @backingInt(PaintKind.shadow) => surface_bit | pt.a,
             else => none,
         };
     }
@@ -2291,7 +2291,7 @@ pub const Scene = struct {
         if (sigma > pix.exact_blur_limit) {
             const b = pix.boxSizes(sigma);
             return self.pushPass(.{
-                .kind = @intFromEnum(PassKind.box3),
+                .kind = @backingInt(PassKind.box3),
                 .src = s,
                 .dst = s,
                 .i = .{ @intCast(b[0]), @intCast(b[1]), @intCast(b[2]), 0, 0, 0, 0, 0 },
@@ -2308,7 +2308,7 @@ pub const Scene = struct {
             .shadow => r = @intFromFloat(@ceil(sigma * 3)),
         }
         var p: Pass = .{
-            .kind = @intFromEnum(PassKind.gauss),
+            .kind = @backingInt(PassKind.gauss),
             .src = s,
             .dst = s,
             .i = .{ r, 0, 0, 0, 0, 0, 0, 0 },
@@ -2332,7 +2332,7 @@ pub const Scene = struct {
         const dir = end.sub(start);
         const sc = ctm.maxScale() * k;
         var p: Pass = .{
-            .kind = @intFromEnum(PassKind.progressive),
+            .kind = @backingInt(PassKind.progressive),
             .src = s,
             .dst = s,
         };
@@ -2347,10 +2347,10 @@ pub const Scene = struct {
         const sc = colour.solid(e.secondary);
         const ss: i32 = @intFromFloat(std.math.clamp(@ceil(2 / @max(ctm.maxScale(), 0.01)), 1, 4));
         var p: Pass = .{
-            .kind = @intFromEnum(PassKind.noise),
+            .kind = @backingInt(PassKind.noise),
             .src = s,
             .dst = s,
-            .i = .{ @intFromEnum(e.noise), ss, 0, 0, 0, 0, 0, 0 },
+            .i = .{ @backingInt(e.noise), ss, 0, 0, 0, 0, 0, 0 },
         };
         p.f = .{
             inv.a,                                  inv.b,                                  inv.c,     inv.d, inv.e, inv.f,
@@ -2366,7 +2366,7 @@ pub const Scene = struct {
         _ = n;
         const inv = ctm.invert() orelse return;
         var p: Pass = .{
-            .kind = @intFromEnum(PassKind.texture),
+            .kind = @backingInt(PassKind.texture),
             .src = s,
             .dst = s,
             .i = .{ @intFromBool(e.clip), 0, 0, 0, 0, 0, 0, 0 },
@@ -2380,7 +2380,7 @@ pub const Scene = struct {
         if (@abs(d) < 0.01) return;
         const whole = @floor(@abs(d));
         var p: Pass = .{
-            .kind = @intFromEnum(PassKind.spread),
+            .kind = @backingInt(PassKind.spread),
             .src = s,
             .dst = s,
             .i = .{ @intFromFloat(whole), @intFromBool(d > 0), 0, 0, 0, 0, 0, 0 },
@@ -2473,7 +2473,7 @@ pub const Scene = struct {
     fn formulaPaint(self: *Scene, box: [4]f32, radii: [4]f32, sigma: f32, ellipse: bool, inner: bool, color: m.Color) !u32 {
         const c = colour.solid(color);
         return self.pushPaint(.{
-            .kind = @intFromEnum(PaintKind.shadow_formula),
+            .kind = @backingInt(PaintKind.shadow_formula),
             .flags = @as(u32, @intFromBool(ellipse)) | (@as(u32, @intFromBool(inner)) << 1),
             .a = 0,
             .b = @bitCast(sigma),
@@ -2601,7 +2601,7 @@ pub const Scene = struct {
         };
         const c = colour.solid(e.color);
         const paint = try self.pushPaint(.{
-            .kind = @intFromEnum(PaintKind.shadow),
+            .kind = @backingInt(PaintKind.shadow),
             .flags = 0,
             .a = sv.surface,
             .b = 0,
@@ -2737,7 +2737,7 @@ pub const Scene = struct {
             .f = -c.ay / c.k - @as(f32, @floatFromInt(rect.y0)),
         };
         const paint = try self.pushPaint(.{
-            .kind = @intFromEnum(PaintKind.shadow),
+            .kind = @backingInt(PaintKind.shadow),
             .flags = 0,
             .a = sv.surface,
             .b = 0,
@@ -2791,7 +2791,7 @@ pub const Scene = struct {
         const sv = try self.beginSurface(rect, n, part_backdrop, ei, ctm);
         try self.endSurface(sv);
         try self.pushPass(.{
-            .kind = @intFromEnum(PassKind.backdrop),
+            .kind = @backingInt(PassKind.backdrop),
             .src = none,
             .dst = sv.surface,
             .i = .{ mk.x0, mk.y0, mk.x1, mk.y1, ox, oy, @intFromBool(render.background_blur_clamp), 0 },
@@ -2946,15 +2946,15 @@ pub const Scene = struct {
         };
         switch (sh) {
             .solid => |c| {
-                out.kind = @intFromEnum(PaintKind.solid);
+                out.kind = @backingInt(PaintKind.solid);
                 out.color = c;
             },
             .gradient => |g| {
                 out.kind = switch (g.kind) {
-                    .linear => @intFromEnum(PaintKind.linear),
-                    .radial => @intFromEnum(PaintKind.radial),
-                    .angular => @intFromEnum(PaintKind.angular),
-                    .diamond => @intFromEnum(PaintKind.diamond),
+                    .linear => @backingInt(PaintKind.linear),
+                    .radial => @backingInt(PaintKind.radial),
+                    .angular => @backingInt(PaintKind.angular),
+                    .diamond => @backingInt(PaintKind.diamond),
                 };
                 out.a = @intCast(self.stops.items.len);
                 out.b = @intCast(g.stops.len);
@@ -2966,7 +2966,7 @@ pub const Scene = struct {
                 out.inv_t = .{ g.inverse.e, g.inverse.f, 0, 0 };
             },
             .image => |im| {
-                out.kind = @intFromEnum(PaintKind.image);
+                out.kind = @backingInt(PaintKind.image);
                 out.flags = @as(u32, @intFromBool(im.tile)) | (@as(u32, @intFromBool(im.decal)) << 1);
                 out.a = try self.textureFor(p.asset, im.mip);
                 out.b = @intCast(im.mip.levels.len);
@@ -3015,7 +3015,7 @@ pub const Scene = struct {
             .op = 0,
             .ox = self.ox,
             .oy = self.oy,
-            .feature = @intFromEnum(Feature.fallback),
+            .feature = @backingInt(Feature.fallback),
             .opacity = 1,
         });
         const fi: u32 = @intCast(self.fallbacks.items.len);
@@ -3029,9 +3029,9 @@ pub const Scene = struct {
         try self.fallbacks.append(self.gpa, .{
             .id_ptr = addr(n.id.ptr),
             .id_len = @intCast(n.id.len),
-            .part = @intFromEnum(part),
+            .part = @backingInt(part),
             .child = child,
-            .reason = @intFromEnum(reason),
+            .reason = @backingInt(reason),
             .prim = pi,
             .rev = n.tree_rev,
             .ctm = .{ ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f },
@@ -3040,8 +3040,8 @@ pub const Scene = struct {
         });
         try self.fallback_ids.append(self.gpa, n.id);
         try self.fallback_revs.append(self.gpa, n.tree_rev);
-        self.header.features[@intFromEnum(Feature.fallback)] += 1;
-        self.header.reasons[@intFromEnum(reason)] += 1;
+        self.header.features[@backingInt(Feature.fallback)] += 1;
+        self.header.reasons[@backingInt(reason)] += 1;
         try self.draws.append(self.gpa, .{
             .kind = Draw.fallback,
             .first = pi,
@@ -3291,7 +3291,7 @@ test "a frame with a clipped child and a ring stroke" {
     try sc.buildPage(s, 0, 0, 0, 2, 100, 100);
     // Frame fill, child fill, the stroke ring; the child clipped by the frame.
     try std.testing.expectEqual(@as(usize, 3), sc.prims.items.len);
-    try std.testing.expectEqual(@as(u32, @intFromEnum(Feature.stroke_ring)), sc.prims.items[2].feature);
+    try std.testing.expectEqual(@as(u32, @backingInt(Feature.stroke_ring)), sc.prims.items[2].feature);
     const child = sc.prims.items[1];
     try std.testing.expect(child.clip != none);
     try std.testing.expectEqual(@as(u32, 1), sc.shapes.items[child.shape].kind);
@@ -3351,8 +3351,8 @@ test "effects, blend modes, opacity and masks become surfaces and passes, not CP
     try sc.buildPage(s, 0, 0, 0, 1, 200, 200);
     try std.testing.expectEqual(@as(u32, 0), sc.header.fallback_count);
     // The card's shadow by formula; the triangle's from a surface (blurred, then cast).
-    try std.testing.expectEqual(@as(u32, 1), sc.header.features[@intFromEnum(Feature.shadow_formula)]);
-    try std.testing.expectEqual(@as(u32, 1), sc.header.features[@intFromEnum(Feature.shadow_pass)]);
+    try std.testing.expectEqual(@as(u32, 1), sc.header.features[@backingInt(Feature.shadow_formula)]);
+    try std.testing.expectEqual(@as(u32, 1), sc.header.features[@backingInt(Feature.shadow_pass)]);
     try std.testing.expect(sc.header.pass_count >= 2);
     // Surfaces begin and end in pairs, each end where its surface says.
     var depth: i32 = 0;
@@ -3368,7 +3368,7 @@ test "effects, blend modes, opacity and masks become surfaces and passes, not CP
     var blended = false;
     var masked = false;
     for (sc.prims.items) |p| {
-        if (p.blend & 0xff == @intFromEnum(pix.BlendMode.multiply)) blended = true;
+        if (p.blend & 0xff == @backingInt(pix.BlendMode.multiply)) blended = true;
         if (p.mask != none) masked = true;
     }
     try std.testing.expect(blended and masked);

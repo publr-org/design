@@ -720,7 +720,7 @@ fn styleResolved(ix: *const Index, scratch: Allocator, a: Allocator, st: *m.Text
             field.* = try a.dupe(u8, s);
             if (eql(u8, key, "fontStyle")) {
                 st.weight = m.weightOfStyle(s);
-                st.italic = std.ascii.indexOfIgnoreCase(s, "italic") != null or std.ascii.indexOfIgnoreCase(s, "oblique") != null;
+                st.italic = std.ascii.findIgnoreCase(s, "italic") != null or std.ascii.findIgnoreCase(s, "oblique") != null;
             }
             changed = true;
             continue;

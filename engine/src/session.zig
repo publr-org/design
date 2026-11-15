@@ -591,7 +591,7 @@ pub const Session = struct {
             f.family = fam;
             if (st) |x| {
                 f.style = x;
-                f.italic = f.italic or std.ascii.indexOfIgnoreCase(x, "italic") != null;
+                f.italic = f.italic or std.ascii.findIgnoreCase(x, "italic") != null;
             }
         }
         for (self.fonts.variable.items[vbefore..]) |*f| f.family = fam;
@@ -1248,8 +1248,8 @@ test "a document kept page by page opens without its pages and reads one when as
     const need = try s.missingForTile(gpa, 0, 0, 0, 1.0 / 16.0, 8, 8);
     defer gpa.free(need);
     try std.testing.expectEqual(@as(usize, 1), need.len);
-    var px = [_]u8{ 255, 0, 0, 255 } ** (64 * 64);
-    const png_bytes = try png.encode(gpa, 64, 64, &px);
+    var px: [64 * 64][4]u8 = @splat(.{ 255, 0, 0, 255 });
+    const png_bytes = try png.encode(gpa, 64, 64, std.mem.asBytes(&px));
     defer gpa.free(png_bytes);
     try s.addAsset("aa", png_bytes);
     var tile = try s.renderTile(0, 0, 0, 1.0 / 16.0, 8, 8, .{});
@@ -1279,8 +1279,8 @@ test "images decoded elsewhere: a render notes what it wants and draws what it i
     ;
     try s.loadPubd(doc);
     s.decode_elsewhere = true;
-    var px = [_]u8{ 255, 0, 0, 255 } ** (64 * 64);
-    const png_bytes = try png.encode(gpa, 64, 64, &px);
+    var px: [64 * 64][4]u8 = @splat(.{ 255, 0, 0, 255 });
+    const png_bytes = try png.encode(gpa, 64, 64, std.mem.asBytes(&px));
     defer gpa.free(png_bytes);
     // Bytes handed over are never decoded here: the render only notes the want.
     try s.addAsset("aa", png_bytes);

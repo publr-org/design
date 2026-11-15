@@ -1408,7 +1408,7 @@ const tiny_gray = blk: {
         0xFF, 0xDB,
         0x00, 0x43,
         0x00,
-    } ++ [_]u8{1} ** 64 ++ [_]u8{
+    } ++ @as([64]u8, @splat(1)) ++ [_]u8{
         // SOF0: 8-bit, 8 high, 16 wide, one component 1x1 using table 0.
         0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x08, 0x00, 0x10, 0x01, 0x01, 0x11, 0x00,
         // DHT DC 0: one 1-bit code "0" for magnitude 4.

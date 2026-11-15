@@ -62,7 +62,7 @@ fn probe(io: Io, gpa: std.mem.Allocator, w: *Io.Writer, args: []const []const u8
     if (std.mem.eql(u8, want, "schema")) {
         // Every field whose name holds `args[2]`, by definition.
         for (im.ctx.s.defs) |d| for (d.fields) |f| {
-            if (std.ascii.indexOfIgnoreCase(f.name, args[2]) != null) try w.print("{s}.{s}\n", .{ d.name, f.name });
+            if (std.ascii.findIgnoreCase(f.name, args[2]) != null) try w.print("{s}.{s}\n", .{ d.name, f.name });
         };
         return;
     }

@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(pe);
 
     const run = b.addRunArtifact(pe);
-    if (b.args) |args| run.addArgs(args);
+    run.addPassthruArgs();
     b.step("run", "Run pe").dependOn(&run.step);
 
     // `zig build serve -- [doc.pubd-dir renders-dir] [--port N]`: the accuracy page, after
@@ -38,16 +38,13 @@ pub fn build(b: *std.Build) void {
     const serve = b.addRunArtifact(pe);
     serve.step.dependOn(&ui.step);
     serve.addArg("serve");
-    if (b.args) |args| {
-        if (args.len < 2 or std.mem.startsWith(u8, args[0], "--")) serve.addArgs(&.{ "corpus/landing/landing.pubd", "corpus/landing/renders" });
-        serve.addArgs(args);
-    } else serve.addArgs(&.{ "corpus/landing/landing.pubd", "corpus/landing/renders" });
+    serve.addPassthruArgs();
     b.step("serve", "Serve the accuracy page (default: the landing corpus)").dependOn(&serve.step);
 
     // `zig build wasm`: zig-out/web/publr_engine.wasm, the engine for the browser viewer
     // (src/wasm.zig). Always optimized unless -Dwasm-optimize says otherwise: a Debug
     // build renders far too slowly to pan.
-    const wasm_optimize = b.option(std.builtin.OptimizeMode, "wasm-optimize", "Optimization for the WASM build (default ReleaseFast)") orelse .ReleaseFast;
+    const wasm_optimize = b.option(std.builtin.Optimize, "wasm-optimize", "Optimization for the WASM build (default ReleaseFast)") orelse .fast;
     // -Dwasm-names keeps function names (profiling in the browser).
     const wasm_names = b.option(bool, "wasm-names", "Keep function names in the WASM build (profiling)") orelse false;
     const wasm_target = b.resolveTargetQuery(.{
@@ -104,7 +101,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("../../publr/scripts/tidy.zig"),
             .target = b.graph.host,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_tidy = b.addRunArtifact(tidy);
