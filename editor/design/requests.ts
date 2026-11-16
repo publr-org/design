@@ -14,7 +14,7 @@ import type { Feature } from "./features";
 
 /** Where publr.app's feature requests answer. `?requests=<address>` on the editor's own
  * address points elsewhere (a local publr.app), remembered in this browser. */
-const DEFAULT_BASE = "https://publr.app/features";
+const DEFAULT_BASE = "https://publr.app";
 const PAGE = 200;
 
 export type Request = Feature & { status: string; votes: number; voted: boolean };
